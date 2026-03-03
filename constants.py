@@ -28,3 +28,4 @@ WINK_R_PIN      = 24    # GPIO pin for RIGHT eye wink button
 
 AUTO_BLINK      = True  # If True, eyes blink autonomously
 CRAZY_EYES      = False # If True, each eye moves in different directions
+FLIP_EYES       = False # Set True when running on hardware (screens mounted 180°)

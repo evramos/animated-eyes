@@ -31,14 +31,20 @@ Use the arm64 venv (`venv/`), not `.venv/` (x86_64) or `.venv_arm64/`.
 
 Consolidates all per-eye state that was previously scattered globals.
 
-**Fields:** `start_x/y`, `dest_x/y`, `cur_x/y`, `move_duration`, `hold_duration`,
-`start_time`, `is_moving`, `blink_state`, `blink_start_time`, `blink_duration`,
-`tracking_pos`
+**Point dataclass** — used for all coordinate pairs. Supports `+`, `-`, `*`, `/`
+operators so eye movement math can be written as `self.current = self.start + (self.destination - self.start) * scale`.
+
+**Fields:**
+- `start`, `destination`, `current` — `Point` objects for eye position
+- `move_duration`, `hold_duration`, `start_time`, `is_moving` — movement timing
+- `blink_state`, `blink_start_time`, `blink_duration` — blink state machine
+- `tracking_pos` — eyelid tracking position (follows eye's vertical position)
 
 **Methods:**
 - `update_position(now)` — autonomous saccade movement state machine
 - `update_blink(wink_pin, now)` — blink state machine (closing → held → opening)
-- `start_blink(now, duration)` — sets EN_BLINKING with given duration
+- `start_blink(now, duration)` — triggers EN_BLINKING with given duration
+- `blink_weight(now)` — returns blink progress (0.0 = open, 1.0 = closed)
 
 In `eyes.py`, `left_eye` and `right_eye` are the two instances.
 
@@ -68,3 +74,5 @@ Key flags: `AUTO_BLINK`, `CRAZY_EYES`, `TRACKING`, `CONVERGENCE`
 Pin assignments: `WINK_L_PIN=22`, `BLINK_PIN=23`, `WINK_R_PIN=24`
 
 Set `CRAZY_EYES = True` to give each eye independent movement.
+
+Set `FLIP_EYES = True` when running on hardware with screens mounted 180° (not needed on macOS).

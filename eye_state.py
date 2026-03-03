@@ -1,20 +1,52 @@
 import random
 import math
+from dataclasses import dataclass
+
 import RPi.GPIO as GPIO
 from constants import *
 
-class EyeState:
-    def __init__(self):
-        start_x = random.uniform(-30.0, 30.0)
-        n = math.sqrt(900.0 - start_x * start_x)
-        start_y = random.uniform(-n, n)
+@dataclass
+class Point:
+    x: float = 0.0
+    y: float = 0.0
 
-        self.start_x = start_x
-        self.start_y = start_y
-        self.dest_x = start_x
-        self.dest_y = start_y
-        self.cur_x = start_x
-        self.cur_y = start_y
+    def copy_from(self, other):
+        self.x = other.x
+        self.y = other.y
+
+    def set(self, x, y):
+        self.x = x
+        self.y = y
+
+    def __add__(self, other):
+        return Point(self.x + other.x, self.y + other.y)
+
+    def __sub__(self, other):
+        return Point(self.x - other.x, self.y - other.y)
+
+    def __mul__(self, scalar):
+        return Point(self.x * scalar, self.y * scalar)
+
+    def __truediv__(self, scalar):
+        return Point(self.x / scalar, self.y / scalar)
+
+
+class EyeState:
+
+    @staticmethod
+    def _random_point():
+        x = random.uniform(-30.0, 30.0)
+        n = math.sqrt(900.0 - x * x)
+        y = random.uniform(-n, n)
+        return Point(x, y)
+
+    def __init__(self):
+        random_point = EyeState._random_point()
+
+        self.start = random_point
+        self.destination = Point(random_point.x, random_point.y)
+        self.current = Point(random_point.x, random_point.y)
+
         self.move_duration = random.uniform(0.075, 0.175)
         self.hold_duration = random.uniform(0.1, 1.1)
         self.start_time = 0.0
@@ -23,6 +55,7 @@ class EyeState:
         self.blink_state = NO_BLINK
         self.blink_start_time = 0.0
         self.blink_duration = 0.1
+
         self.tracking_pos = 0.3
 
     def start_blink(self, now, duration):
@@ -38,40 +71,27 @@ class EyeState:
             if dt <= self.move_duration:
                 scale = dt / self.move_duration
                 scale = 3.0 * scale * scale - 2.0 * scale * scale * scale
-                self.cur_x = self.start_x + (self.dest_x - self.start_x) * scale
-                self.cur_y = self.start_y + (self.dest_y - self.start_y) * scale
+                self.current = self.start + (self.destination - self.start) * scale
             else:
-                self.start_x = self.dest_x
-                self.start_y = self.dest_y
-                self.cur_x = self.dest_x
-                self.cur_y = self.dest_y
+                self.start.copy_from(self.destination)
+                self.current.copy_from(self.destination)
                 self.hold_duration = random.uniform(0.1, 1.1)
                 self.start_time = now
                 self.is_moving = False
         else:
             if dt >= self.hold_duration:
-                self.dest_x = random.uniform(-30.0, 30.0)
-                n = math.sqrt(900.0 - self.dest_x * self.dest_x)
-                self.dest_y = random.uniform(-n, n)
+                self.destination = EyeState._random_point()
                 self.move_duration = random.uniform(0.075, 0.175)
                 self.start_time = now
                 self.is_moving = True
 
 
     def update_blink(self, wink_pin, now):
-        """Advance the blink state machine for one eye and return updated state.
-
-        State values: 0 = NOBLINK, 1 = ENBLINKING (closing), 2 = DEBLINKING (opening).
+        """Advance the blink state machine for this eye.
 
         Args:
-            blink_state      (int):   Current blink state (0, 1, or 2).
-            blink_start_time (float): Timestamp when current state began (seconds).
-            blink_duration   (float): How long the current state should last (seconds).
-            wink_pin         (int):   GPIO pin for this eye's wink button (-1 if unused).
-            now              (float): Current timestamp (seconds).
-
-        Returns:
-            tuple(int, float, float): Updated (blink_state, blink_start_time, blink_duration).
+            wink_pin (int): GPIO pin for this eye's wink button (-1 if unused).
+            now      (float): Current timestamp in seconds.
 
         Notes:
             - If the eye is mid-blink and the hold condition is met (BLINK_PIN or wink_pin held LOW), the state is frozen until the button is released.
@@ -96,3 +116,13 @@ class EyeState:
                 self.blink_state = EN_BLINKING
                 self.blink_start_time = now
                 self.blink_duration = random.uniform(0.035, 0.06)
+
+    def blink_weight(self, now):
+        """Returns blink progress n (0.0 = open, 1.0 = closed)."""
+        if self.blink_state:
+            n = min((now - self.blink_start_time) / self.blink_duration, 1.0)
+            if self.blink_state == DE_BLINKING:
+                n = 1.0 - n
+        else:
+            n = 0.0
+        return n

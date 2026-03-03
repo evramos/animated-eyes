@@ -11,8 +11,8 @@ import RPi.GPIO as GPIO
 from xml.dom.minidom import parse
 from gfxutil import *
 from snake_eyes_bonnet import SnakeEyesBonnet
-from constants import *
 from eye_state import EyeState
+from constants import *
 
 
 # GPIO initialization ------------------------------------------------------
@@ -39,7 +39,7 @@ if JOYSTICK_X_IN >= 0 or JOYSTICK_Y_IN >= 0 or PUPIL_IN >= 0:
 # Load SVG file, extract paths & convert to point lists --------------------
 
 dom               = parse("graphics/dragon-eye.svg")
-vb                = get_view_box(dom)
+view_box          = get_view_box(dom)
 pupilMinPts       = get_points(dom, "pupilMin"      , 32, True , True )
 pupilMaxPts       = get_points(dom, "pupilMax"      , 32, True , True )
 irisPts           = get_points(dom, "iris"          , 32, True , True )
@@ -62,7 +62,7 @@ DISPLAY.set_background(0, 0, 0, 1) # r,g,b,alpha
 # eyeRadius is the size, in pixels, at which the whole eye will be rendered onscreen. eyePosition, also pixels, is the
 # offset (left or right) from the center point of the screen to the center of each eye. This geometry is explained more in-depth in fbx2.c.
 eyePosition = DISPLAY.width / 4
-eyeRadius   = 128  # Default; use 240 for IPS screens
+eyeRadius = 128  # Default; use 240 for IPS screens
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--radius", type=int)
@@ -78,7 +78,6 @@ cam    = pi3d.Camera(is_3d=False, at=(0,0,0), eye=(0,0,-1000))
 shader = pi3d.Shader("uv_light")
 light  = pi3d.Light(lightpos=(0, -500, -500), lightamb=(0.2, 0.2, 0.2))
 
-
 # Load texture maps --------------------------------------------------------
 
 irisMap   = pi3d.Texture("graphics/dragon-iris-color.png", mipmap=False, filter=pi3d.constants.GL_LINEAR)
@@ -88,32 +87,26 @@ lidMap    = pi3d.Texture("graphics/lid.png", mipmap=False, filter=pi3d.constants
 # U/V map may be useful for debugging texture placement; not normally used
 uvMap     = pi3d.Texture("graphics/uv.png", mipmap=False, filter=pi3d.constants.GL_LINEAR, blend=False, m_repeat=True)
 
-
 # Initialize static geometry -----------------------------------------------
 
 # Transform point lists to eye dimensions
-scale_points(pupilMinPts      , vb, eyeRadius)
-scale_points(pupilMaxPts      , vb, eyeRadius)
-scale_points(irisPts          , vb, eyeRadius)
-scale_points(scleraFrontPts   , vb, eyeRadius)
-scale_points(scleraBackPts    , vb, eyeRadius)
-scale_points(upperLidClosedPts, vb, eyeRadius)
-scale_points(upperLidOpenPts  , vb, eyeRadius)
-scale_points(upperLidEdgePts  , vb, eyeRadius)
-scale_points(lowerLidClosedPts, vb, eyeRadius)
-scale_points(lowerLidOpenPts  , vb, eyeRadius)
-scale_points(lowerLidEdgePts  , vb, eyeRadius)
+points_list = [
+    pupilMinPts, pupilMaxPts, irisPts, scleraFrontPts, scleraBackPts,
+    upperLidClosedPts, upperLidOpenPts, upperLidEdgePts,
+    lowerLidClosedPts, lowerLidOpenPts, lowerLidEdgePts
+]
+for points in points_list:
+    scale_points(points, view_box, eyeRadius)
 
-# Regenerating flexible object geometry (such as eyelids during blinks, or
-# iris during pupil dilation) is CPU intensive, can noticably slow things
-# down, especially on single-core boards.  To reduce this load somewhat,
-# determine a size change threshold below which regeneration will not occur;
+# Regenerating flexible object geometry (such as eyelids during blinks, or iris during pupil dilation) is CPU intensive, can noticeably slow things
+# down, especially on single-core boards.  To reduce this load somewhat, determine a size change threshold below which regeneration will not occur;
 # roughly equal to 1/4 pixel, since 4x4 area sampling is used.
 
 # Determine change in pupil size to trigger iris geometry regen
 irisRegenThreshold = 0.0
 a = points_bounds(pupilMinPts) # Bounds of pupil at min size (in pixels)
 b = points_bounds(pupilMaxPts) # " at max size
+
 maxDist = max(abs(a[0] - b[0]), abs(a[1] - b[1]), # Determine distance of max
               abs(a[2] - b[2]), abs(a[3] - b[3])) # variance around each edge
 # maxDist is motion range in pixels as pupil scales between 0.0 and 1.0.
@@ -137,21 +130,19 @@ def lid_regen_threshold(open_pts, closed_pts):
 upperLidRegenThreshold = lid_regen_threshold(upperLidOpenPts, upperLidClosedPts)
 lowerLidRegenThreshold = lid_regen_threshold(lowerLidOpenPts, lowerLidClosedPts)
 
-# Generate initial iris meshes; vertex elements will get replaced on
-# a per-frame basis in the main loop, this just sets up textures, etc.
+# Generate initial iris meshes; vertex elements will get replaced on a per-frame basis in the main loop, this just sets up textures, etc.
 rightIris = mesh_init((32, 4), (0, 0.5 / irisMap.iy), True, False)
 rightIris.set_textures([irisMap])
 rightIris.set_shader(shader)
 
-# Left iris map U value is offset by 0.5; effectively a 180 degree
-# rotation, so it's less obvious that the same texture is in use on both.
+# Left iris map U value is offset by 0.5; effectively a 180 degree rotation, so it's less obvious that the same texture is in use on both.
 leftIris = mesh_init((32, 4), (0.5, 0.5 / irisMap.iy), True, False)
 leftIris.set_textures([irisMap])
 leftIris.set_shader(shader)
 irisZ = zangle(irisPts, eyeRadius)[0] * 0.99 # Get iris Z depth, for later
 
-# Eyelid meshes are likewise temporary; texture coordinates are
-# assigned here but geometry is dynamically regenerated in main loop.
+# ----------------------------------------------------------------------------------------------------------------------
+# Eyelid meshes are likewise temporary; texture coordinates are assigned here but geometry is dynamically regenerated in main loop.
 leftUpperEyelid = mesh_init((33, 5), (0, 0.5 / lidMap.iy), False, True)
 leftUpperEyelid.set_textures([lidMap])
 leftUpperEyelid.set_shader(shader)
@@ -167,7 +158,7 @@ rightUpperEyelid.set_shader(shader)
 rightLowerEyelid = mesh_init((33, 5), (0, 0.5 / lidMap.iy), False, True)
 rightLowerEyelid.set_textures([lidMap])
 rightLowerEyelid.set_shader(shader)
-
+# ----------------------------------------------------------------------------------------------------------------------
 # Generate scleras for each eye...start with a 2D shape for lathing...
 angle1 = zangle(scleraFrontPts, eyeRadius)[1] # Sclera front angle
 angle2 = zangle(scleraBackPts , eyeRadius)[1] # " back angle
@@ -203,10 +194,9 @@ re_axis(rightEye, 0.5) # Image map offset = 180 degree rotation
 # Init global stuff --------------------------------------------------------
 
 mykeys = pi3d.Keyboard() # For capturing key presses
-
 left_eye, right_eye = (EyeState(), EyeState())
 
-frames        = 0
+frames = 0
 beginningTime = time.time()
 
 rightEye.positionX(-eyePosition)
@@ -235,20 +225,14 @@ luRegen, llRegen, ruRegen, rlRegen = (True, True, True, True)
 timeOfLastBlink, timeToNextBlink = (0.0, 1.0)
 
 
-# Generate one frame of imagery
+# ----------------------------------------------------------------------------------------------------------------------
+# Frame -- Generate one frame of imagery
+# ----------------------------------------------------------------------------------------------------------------------
 def frame(p):
-
     global frames
-    global leftIris, rightIris
-    global pupilMinPts, pupilMaxPts, irisPts, irisZ
-    global leftEye, rightEye
-    global leftUpperEyelid, leftLowerEyelid, rightUpperEyelid, rightLowerEyelid
-    global upperLidOpenPts, upperLidClosedPts, lowerLidOpenPts, lowerLidClosedPts
-    global upperLidEdgePts, lowerLidEdgePts
+    global prevPupilScale
     global prevLeftUpperLidPts, prevLeftLowerLidPts, prevRightUpperLidPts, prevRightLowerLidPts
     global prevLeftUpperLidWeight, prevLeftLowerLidWeight, prevRightUpperLidWeight, prevRightLowerLidWeight
-    global prevPupilScale
-    global irisRegenThreshold, upperLidRegenThreshold, lowerLidRegenThreshold
     global luRegen, llRegen, ruRegen, rlRegen
     global timeOfLastBlink, timeToNextBlink
 
@@ -261,15 +245,22 @@ def frame(p):
 
     if JOYSTICK_X_IN >= 0 and JOYSTICK_Y_IN >= 0:
         # Eye position from analog inputs
-        left_eye.cur_x = -30.0 + bonnet.channel[JOYSTICK_X_IN].value * 60.0
-        left_eye.cur_y = -30.0 + bonnet.channel[JOYSTICK_Y_IN].value * 60.0
+        left_eye.current.x = -30.0 + bonnet.channel[JOYSTICK_X_IN].value * 60.0
+        left_eye.current.y = -30.0 + bonnet.channel[JOYSTICK_Y_IN].value * 60.0
     else : # Autonomous eye position
         left_eye.update_position(now)
 
     if CRAZY_EYES: # repeat for other eye if CRAZY_EYES
         right_eye.update_position(now)
-
+# ----------------------------------------------------------------------------------------------------------------------
+    """
     # Regenerate iris geometry only if size changed by >= 1/4 pixel
+    
+    p is the current pupil scale (0.0–1.0). Every frame it checks if the pupil has changed enough to be worth redrawing (at  
+    least 1/4 pixel worth of change). If so, it interpolates between the minimum and maximum pupil point shapes, generates a
+    3D mesh connecting the pupil ring to the iris ring, and pushes that mesh to both eyes. prevPupilScale is saved so next
+    frame knows where it left off.
+    """
     if abs(p - prevPupilScale) >= irisRegenThreshold:
         # Interpolate points between min and max pupil sizes
         interPupil = points_interp(pupilMinPts, pupilMaxPts, p)
@@ -282,7 +273,9 @@ def frame(p):
 
 # ----------------------------------------------------------------------------------------------------------------------
     # Eyelid WIP
-
+    """
+    Auto-blink timer — if enough time has passed since the last blink, trigger both eyes to close and schedule the next blink randomly.
+    """
     if AUTO_BLINK and (now - timeOfLastBlink) >= timeToNextBlink:
         timeOfLastBlink = now
         duration = random.uniform(0.035, 0.06) # duration = random.uniform(0.035, 1.00)
@@ -292,6 +285,9 @@ def frame(p):
 
         timeToNextBlink = duration * 3 + random.uniform(0.0, 4.0) # timeToNextBlink = duration * 3 + random.uniform(0.0, 5.0)
 
+    """
+    update_blink — advances each eye's blink state machine: closing → held closed (if button held) → opening → done.
+    """
     left_eye.update_blink(WINK_L_PIN, now)
     right_eye.update_blink(WINK_R_PIN, now)
 
@@ -301,39 +297,27 @@ def frame(p):
         if left_eye.blink_state == NO_BLINK: left_eye.start_blink(now , duration)
         if right_eye.blink_state == NO_BLINK: right_eye.start_blink(now , duration)
 # ----------------------------------------------------------------------------------------------------------------------
+    # TODO - Need an explanation on what this section does between the comment dashes '# ----'
     """
     Keeps the upper eyelid in sync with the eye. I think
     """
 
     if TRACKING:
-        n = 0.4 - left_eye.cur_y / 60.0
+        n = 0.4 - left_eye.current.y / 60.0
         n = max(0.0, min(n, 1.0))
         left_eye.tracking_pos = (left_eye.tracking_pos * 3.0 + n) * 0.25
 
         if CRAZY_EYES:
-            n = 0.4 - right_eye.cur_y / 60.0
+            n = 0.4 - right_eye.current.y / 60.0
             n = max(0.0, min(n, 1.0))
             right_eye.tracking_pos = (right_eye.tracking_pos * 3.0 + n) * 0.25
 
 # ----------------------------------------------------------------------------------------------------------------------
-    if left_eye.blink_state:
-        n = (now - left_eye.blink_start_time) / left_eye.blink_duration
-        if n > 1.0: n = 1.0
-        if left_eye.blink_state == DE_BLINKING: n = 1.0 - n
-    else:
-        n = 0.0
-
+    n = left_eye.blink_weight(now)
     newLeftUpperLidWeight = left_eye.tracking_pos + (n * (1.0 - left_eye.tracking_pos))
     newLeftLowerLidWeight = (1.0 - left_eye.tracking_pos) + (n * left_eye.tracking_pos)
 
-
-    if right_eye.blink_state:
-        n = (now - right_eye.blink_start_time) / right_eye.blink_duration
-        if n > 1.0: n = 1.0
-        if right_eye.blink_state == DE_BLINKING: n = 1.0 - n
-    else:
-        n = 0.0
-
+    n = right_eye.blink_weight(now)
     if CRAZY_EYES:
         newRightUpperLidWeight = right_eye.tracking_pos + (n * (1.0 - right_eye.tracking_pos))
         newRightLowerLidWeight = (1.0 - right_eye.tracking_pos) + (n * right_eye.tracking_pos)
@@ -342,109 +326,79 @@ def frame(p):
         newRightLowerLidWeight = (1.0 - left_eye.tracking_pos) + (n * left_eye.tracking_pos)
 
 # ----------------------------------------------------------------------------------------------------------------------
-    if (luRegen or (abs(newLeftUpperLidWeight - prevLeftUpperLidWeight) >= upperLidRegenThreshold)):
-        newLeftUpperLidPts = points_interp(upperLidOpenPts, upperLidClosedPts, newLeftUpperLidWeight)
+    def update_lid(mesh, open_pts, closed_pts, edge_pts, new_weight, prev_weight, prev_pts, regen, threshold, flip):
+        if regen or abs(new_weight - prev_weight) >= threshold:
+            new_pts = points_interp(open_pts, closed_pts, new_weight)
+            if new_weight > prev_weight:
+                mesh.re_init(pts=points_mesh((edge_pts, prev_pts, new_pts), 5, 0, flip))
+            else:
+                mesh.re_init(pts=points_mesh((edge_pts, new_pts, prev_pts), 5, 0, flip))
+            return new_pts, new_weight, True
+        return prev_pts, prev_weight, False
 
-        if newLeftUpperLidWeight > prevLeftUpperLidWeight:
-            leftUpperEyelid.re_init(pts=points_mesh((upperLidEdgePts, prevLeftUpperLidPts, newLeftUpperLidPts), 5, 0, False))
-        else:
-            leftUpperEyelid.re_init(pts=points_mesh((upperLidEdgePts, newLeftUpperLidPts, prevLeftUpperLidPts), 5, 0, False))
+    prevLeftUpperLidPts, prevLeftUpperLidWeight, luRegen = update_lid(
+        leftUpperEyelid, upperLidOpenPts, upperLidClosedPts, upperLidEdgePts, newLeftUpperLidWeight,
+        prevLeftUpperLidWeight, prevLeftUpperLidPts, luRegen, upperLidRegenThreshold, False
+    )
+    prevLeftLowerLidPts, prevLeftLowerLidWeight, llRegen = update_lid(
+        leftLowerEyelid, lowerLidOpenPts, lowerLidClosedPts, lowerLidEdgePts, newLeftLowerLidWeight,
+        prevLeftLowerLidWeight, prevLeftLowerLidPts, llRegen, lowerLidRegenThreshold, False
+    )
 
-        prevLeftUpperLidPts    = newLeftUpperLidPts
-        prevLeftUpperLidWeight = newLeftUpperLidWeight
-        luRegen = True
-    else:
-        luRegen = False
-
-    if (llRegen or (abs(newLeftLowerLidWeight - prevLeftLowerLidWeight) >= lowerLidRegenThreshold)):
-        newLeftLowerLidPts = points_interp(lowerLidOpenPts, lowerLidClosedPts, newLeftLowerLidWeight)
-
-        if newLeftLowerLidWeight > prevLeftLowerLidWeight:
-            leftLowerEyelid.re_init(pts=points_mesh((lowerLidEdgePts, prevLeftLowerLidPts, newLeftLowerLidPts), 5, 0, False))
-        else:
-            leftLowerEyelid.re_init(pts=points_mesh((lowerLidEdgePts, newLeftLowerLidPts, prevLeftLowerLidPts), 5, 0, False))
-
-        prevLeftLowerLidWeight = newLeftLowerLidWeight
-        prevLeftLowerLidPts    = newLeftLowerLidPts
-        llRegen = True
-    else:
-        llRegen = False
-
-    if (ruRegen or (abs(newRightUpperLidWeight - prevRightUpperLidWeight) >= upperLidRegenThreshold)):
-        newRightUpperLidPts = points_interp(upperLidOpenPts, upperLidClosedPts, newRightUpperLidWeight)
-
-        if newRightUpperLidWeight > prevRightUpperLidWeight:
-            rightUpperEyelid.re_init(pts=points_mesh((upperLidEdgePts, prevRightUpperLidPts, newRightUpperLidPts), 5, 0, True))
-        else:
-            rightUpperEyelid.re_init(pts=points_mesh((upperLidEdgePts, newRightUpperLidPts, prevRightUpperLidPts), 5, 0, True))
-
-        prevRightUpperLidWeight = newRightUpperLidWeight
-        prevRightUpperLidPts    = newRightUpperLidPts
-        ruRegen = True
-    else:
-        ruRegen = False
-
-    if (rlRegen or (abs(newRightLowerLidWeight - prevRightLowerLidWeight) >= lowerLidRegenThreshold)):
-        newRightLowerLidPts = points_interp(lowerLidOpenPts, lowerLidClosedPts, newRightLowerLidWeight)
-
-        if newRightLowerLidWeight > prevRightLowerLidWeight:
-            rightLowerEyelid.re_init(pts=points_mesh((lowerLidEdgePts, prevRightLowerLidPts, newRightLowerLidPts), 5, 0, True))
-        else:
-            rightLowerEyelid.re_init(pts=points_mesh((lowerLidEdgePts, newRightLowerLidPts,prevRightLowerLidPts), 5, 0, True))
-
-        prevRightLowerLidWeight = newRightLowerLidWeight
-        prevRightLowerLidPts    = newRightLowerLidPts
-        rlRegen = True
-    else:
-        rlRegen = False
+    prevRightUpperLidPts, prevRightUpperLidWeight, ruRegen = update_lid(
+        rightUpperEyelid, upperLidOpenPts, upperLidClosedPts, upperLidEdgePts, newRightUpperLidWeight,
+        prevRightUpperLidWeight, prevRightUpperLidPts, ruRegen, upperLidRegenThreshold, True
+    )
+    prevRightLowerLidPts, prevRightLowerLidWeight, rlRegen = update_lid(
+        rightLowerEyelid, lowerLidOpenPts, lowerLidClosedPts, lowerLidEdgePts, newRightLowerLidWeight,
+        prevRightLowerLidWeight, prevRightLowerLidPts, rlRegen, lowerLidRegenThreshold, True
+    )
 
 # ----------------------------------------------------------------------------------------------------------------------
+    # Left eye (on screen right)
+    leftIris.rotateToX(left_eye.current.y)
+    leftIris.rotateToY(left_eye.current.x + CONVERGENCE)
+    leftEye.rotateToX(left_eye.current.y)
+    leftEye.rotateToY(left_eye.current.x + CONVERGENCE)
 
     # Right eye (on screen left)
     if CRAZY_EYES:
-        rightIris.rotateToX(right_eye.cur_y)
-        rightIris.rotateToY(right_eye.cur_x - CONVERGENCE)
-        # rightIris.rotateToZ(180) #Flip Right Eye Horizontally
-        rightIris.draw()
-
-        rightEye.rotateToX(right_eye.cur_y)
-        rightEye.rotateToY(right_eye.cur_x - CONVERGENCE)
+        rightIris.rotateToX(right_eye.current.y)
+        rightIris.rotateToY(right_eye.current.x - CONVERGENCE)
+        rightEye.rotateToX(right_eye.current.y)
+        rightEye.rotateToY(right_eye.current.x - CONVERGENCE)
     else:
-        rightIris.rotateToX(left_eye.cur_y)
-        rightIris.rotateToY(left_eye.cur_x - CONVERGENCE)
-        # rightIris.rotateToZ(180) #Flip Right Eye Horizontally
-        rightIris.draw()
+        rightIris.rotateToX(left_eye.current.y)
+        rightIris.rotateToY(left_eye.current.x - CONVERGENCE)
+        rightEye.rotateToX(left_eye.current.y)
+        rightEye.rotateToY(left_eye.current.x - CONVERGENCE)
 
-        rightEye.rotateToX(left_eye.cur_y)
-        rightEye.rotateToY(left_eye.cur_x - CONVERGENCE)
+    # Flip Eyes Horizontally
+    if FLIP_EYES:
+        leftIris.rotateToZ(180)
+        leftEye.rotateToZ(180)
+        leftUpperEyelid.rotateToZ(180)
+        leftLowerEyelid.rotateToZ(180)
 
-    # rightEye.rotateToZ(180) #Flip Right Eye Horizontally
-    rightEye.draw()
+        rightIris.rotateToZ(180)
+        rightEye.rotateToZ(180)
+        rightUpperEyelid.rotateToZ(180)
+        rightLowerEyelid.rotateToZ(180)
 
-    # Left eye (on screen right)
-    leftIris.rotateToX(left_eye.cur_y)
-    leftIris.rotateToY(left_eye.cur_x + CONVERGENCE)
-    # leftIris.rotateToZ(180) #Flip Left Eye Horizontally
     leftIris.draw()
-
-    leftEye.rotateToX(left_eye.cur_y)
-    leftEye.rotateToY(left_eye.cur_x + CONVERGENCE)
-    # leftEye.rotateToZ(180) #Flip Left Eye Horizontally
     leftEye.draw()
-
-    # rightUpperEyelid.rotateToZ(180) #Flip Right Eye Horizontally
-    # rightLowerEyelid.rotateToZ(180) #Flip Right Eye Horizontally
-
-    # leftUpperEyelid.rotateToZ(180) #Flip Left Eye Horizontally
-    # leftLowerEyelid.rotateToZ(180) #Flip Left Eye Horizontally
-
     leftUpperEyelid.draw()
     leftLowerEyelid.draw()
+
+    rightIris.draw()
+    rightEye.draw()
     rightUpperEyelid.draw()
     rightLowerEyelid.draw()
 
-
-def split_pupil(start_value, end_value, duration, range):
+# ----------------------------------------------------------------------------------------------------------------------
+# Split Pupil -- Recursive simulated pupil response
+# ----------------------------------------------------------------------------------------------------------------------
+def split_pupil(start_value, end_value, duration, variance):
     """
     Recursive simulated pupil response when no analog sensor is present. Subdivides the transition between startValue and endValue
     into smaller random segments until the range drops below 0.125, then animates the pupil scale linearly over the remaining duration.
@@ -453,17 +407,16 @@ def split_pupil(start_value, end_value, duration, range):
       start_value (float): Pupil scale starting value (0.0 to 1.0).
       end_value (float): Pupil scale ending value (0.0 to 1.0).
       duration (float): Start-to-end time in floating-point seconds.
-      range (float): Maximum +/- random pupil scale deviation at midpoint.
+      variance (float): Maximum +/- random pupil scale deviation at midpoint.
     """
-
     start_time = time.time()
-    if range >= 0.125: # Limit sub-dvision count, because recursion
+    if variance >= 0.125: # Limit sub-dvision count, because recursion
         duration *= 0.5 # Split time & range in half for subdivision,
-        range    *= 0.5 # then pick random center point within range:
-        mid_value = ((start_value + end_value - range) * 0.5 + random.uniform(0.0, range))
+        variance *= 0.5 # then pick random center point within variance range:
+        mid_value = ((start_value + end_value - variance) * 0.5 + random.uniform(0.0, variance))
 
-        split_pupil(start_value, mid_value, duration, range)
-        split_pupil(mid_value, end_value, duration, range)
+        split_pupil(start_value, mid_value, duration, variance)
+        split_pupil(mid_value, end_value, duration, variance)
 
     else: # No more subdivisions, do iris motion...
         dv = end_value - start_value

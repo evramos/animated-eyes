@@ -1,0 +1,6 @@
+/.venv/
+/venv/
+/.venv_arm64/
+/.idea/
+.DS_Store
+__pycache__/

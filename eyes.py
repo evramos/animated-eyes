@@ -1,8 +1,8 @@
 #!/usr/bin/python
 
-# This is a hasty port of the Teensy eyes code to Python...all kludgey with
-# an embarrassing number of globals in the frame() function and stuff.
-# Needed to get SOMETHING working, can focus on improvements next.
+# Animated dragon eyes for Raspberry Pi using pi3d.
+# Per-eye state (position, blink, tracking) is managed by EyeState in eye_state.py.
+# Constants are in constants.py. Hardware is mocked for macOS dev via mock_hardware.py.
 
 import argparse
 import random
@@ -121,12 +121,12 @@ maxDist = max(abs(a[0] - b[0]), abs(a[1] - b[1]), # Determine distance of max
 if maxDist > 0: irisRegenThreshold = 0.25 / maxDist
 
 
-"""
-Determine change in eyelid values needed to trigger geometry regen.
-This is done a little differently than the pupils...instead of bounds, the distance between the middle points of the open
-and closed eyelid paths is evaluated, then similar 1/4 pixel threshold is determined.
-"""
 def lid_regen_threshold(open_pts, closed_pts):
+    """
+    Determine change in eyelid values needed to trigger geometry regen.
+    This is done a little differently than the pupils...instead of bounds, the distance between the middle points of the open
+    and closed eyelid paths is evaluated, then similar 1/4 pixel threshold is determined.
+    """
     mid_open = open_pts[len(open_pts) // 2]
     mid_closed = closed_pts[len(closed_pts) // 2]
     delta_x = mid_closed[0] - mid_open[0]
@@ -204,34 +204,7 @@ re_axis(rightEye, 0.5) # Image map offset = 180 degree rotation
 
 mykeys = pi3d.Keyboard() # For capturing key presses
 
-
-# def init_eye_state():
-#     start_x = random.uniform(-30.0, 30.0)
-#     n = math.sqrt(900.0 - start_x * start_x)
-#     start_y = random.uniform(-n, n)
-#     return (start_x, start_y, start_x, start_y,
-#             random.uniform(0.075, 0.175), random.uniform(0.1, 1.1), 0.0, False)
-
-startX       = random.uniform(-30.0, 30.0)
-n            = math.sqrt(900.0 - startX * startX)
-startY       = random.uniform(-n, n)
-destX, destY, curX, curY = (startX, startY, startX, startY)
-
-moveDuration = random.uniform(0.075, 0.175)
-holdDuration = random.uniform(0.1, 1.1)
-
-startTime    = 0.0
-isMoving     = False
-
-startXR      = random.uniform(-30.0, 30.0)
-n            = math.sqrt(900.0 - startX * startX)
-startYR      = random.uniform(-n, n)
-destXR, destYR, curXR, curYR = (startXR, startYR, startXR, startYR)
-
-moveDurationR = random.uniform(0.075, 0.175)
-holdDurationR = random.uniform(0.1, 1.1)
-startTimeR    = 0.0
-isMovingR     = False
+left_eye, right_eye = (EyeState(), EyeState())
 
 frames        = 0
 beginningTime = time.time()
@@ -250,7 +223,6 @@ leftUpperEyelid.positionZ(-eyeRadius - 42)
 leftLowerEyelid.positionX(eyePosition)
 leftLowerEyelid.positionZ(-eyeRadius - 42)
 
-# currentPupilScale       =  0.5
 prevPupilScale          = -1.0 # Force regen on first frame
 prevLeftUpperLidWeight, prevLeftLowerLidWeight = (0.5, 0.5)
 prevRightUpperLidWeight, prevRightLowerLidWeight = (0.5, 0.5)
@@ -260,69 +232,11 @@ prevRightUpperLidPts = points_interp(upperLidOpenPts, upperLidClosedPts, 0.5)
 prevRightLowerLidPts = points_interp(lowerLidOpenPts, lowerLidClosedPts, 0.5)
 
 luRegen, llRegen, ruRegen, rlRegen = (True, True, True, True)
-
-timeOfLastBlink = 0.0
-timeToNextBlink = 1.0
-
-# These are per-eye (left, right) to allow winking:
-blinkStateLeft,     blinkStateRight     = (NO_BLINK, NO_BLINK)
-blinkDurationLeft,  blinkDurationRight  = (0.1, 0.1)
-blinkStartTimeLeft, blinkStartTimeRight = (0, 0)
-
-trackingPos = 0.3
-trackingPosR = 0.3
-
-
-def update_blink(blink_state, blink_start_time, blink_duration, wink_pin, now):
-    """Advance the blink state machine for one eye and return updated state.
-
-    State values: 0 = NOBLINK, 1 = ENBLINKING (closing), 2 = DEBLINKING (opening).
-
-    Args:
-        blink_state      (int):   Current blink state (0, 1, or 2).
-        blink_start_time (float): Timestamp when current state began (seconds).
-        blink_duration   (float): How long the current state should last (seconds).
-        wink_pin         (int):   GPIO pin for this eye's wink button (-1 if unused).
-        now              (float): Current timestamp (seconds).
-
-    Returns:
-        tuple(int, float, float): Updated (blink_state, blink_start_time, blink_duration).
-
-    Notes:
-        - If the eye is mid-blink and the hold condition is met (BLINK_PIN or wink_pin held LOW), the state is frozen until the button is released.
-        - On state advance, duration doubles to give the opening phase the same length as the closing phase.
-        - If idle (state 0) and wink_pin is held LOW, a new blink is triggered.
-    """
-    if blink_state:
-        if (now - blink_start_time) > blink_duration:
-            if (blink_state == EN_BLINKING and
-                ((BLINK_PIN >= 0 and GPIO.input(BLINK_PIN) == GPIO.LOW) or  # blink pin held, or...
-                (wink_pin >= 0 and GPIO.input(wink_pin) == GPIO.LOW))): # wink pin held
-                pass # eye held close don't advance
-            else:
-                blink_state += 1
-
-                if blink_state > DE_BLINKING: blink_state = NO_BLINK
-                else:
-                    blink_duration *= 2.0
-                    blink_start_time = now
-    else:
-        if wink_pin >= 0 and GPIO.input(wink_pin) == GPIO.LOW:
-            blink_state = EN_BLINKING
-            blink_start_time = now
-            blink_duration = random.uniform(0.035, 0.06)
-
-    return blink_state, blink_start_time, blink_duration
+timeOfLastBlink, timeToNextBlink = (0.0, 1.0)
 
 
 # Generate one frame of imagery
 def frame(p):
-    # global left_eye, right_eye
-
-    global startX, startY, destX, destY, curX, curY
-    global startXR, startYR, destXR, destYR, curXR, curYR
-    global moveDuration, holdDuration, startTime, isMoving
-    global moveDurationR, holdDurationR, startTimeR, isMovingR
 
     global frames
     global leftIris, rightIris
@@ -337,79 +251,23 @@ def frame(p):
     global irisRegenThreshold, upperLidRegenThreshold, lowerLidRegenThreshold
     global luRegen, llRegen, ruRegen, rlRegen
     global timeOfLastBlink, timeToNextBlink
-    global blinkStateLeft, blinkStateRight
-    global blinkDurationLeft, blinkDurationRight
-    global blinkStartTimeLeft, blinkStartTimeRight
-    global trackingPos, trackingPosR
 
     DISPLAY.loop_running()
-
     now = time.time()
-    dt  = now - startTime
-    dtR  = now - startTimeR
-
     frames += 1
+
     # if(now > beginningTime):
     # 	print("now > beginningTime: ", frames/(now-beginningTime))
 
     if JOYSTICK_X_IN >= 0 and JOYSTICK_Y_IN >= 0:
         # Eye position from analog inputs
+        left_eye.cur_x = -30.0 + bonnet.channel[JOYSTICK_X_IN].value * 60.0
+        left_eye.cur_y = -30.0 + bonnet.channel[JOYSTICK_Y_IN].value * 60.0
+    else : # Autonomous eye position
+        left_eye.update_position(now)
 
-        curX = bonnet.channel[JOYSTICK_X_IN].value
-        curY = bonnet.channel[JOYSTICK_Y_IN].value
-        curX = -30.0 + curX * 60.0
-        curY = -30.0 + curY * 60.0
-    else :
-        # Autonomous eye position
-        if isMoving == True:
-            if dt <= moveDuration:
-                scale        = (now - startTime) / moveDuration
-                # Ease in/out curve: 3*t^2-2*t^3
-                scale = 3.0 * scale * scale - 2.0 * scale * scale * scale
-                curX         = startX + (destX - startX) * scale
-                curY         = startY + (destY - startY) * scale
-            else:
-                startX       = destX
-                startY       = destY
-                curX         = destX
-                curY         = destY
-                holdDuration = random.uniform(0.1, 1.1)
-                startTime    = now
-                isMoving     = False
-        else:
-            if dt >= holdDuration:
-                destX        = random.uniform(-30.0, 30.0)
-                n            = math.sqrt(900.0 - destX * destX)
-                destY        = random.uniform(-n, n)
-                moveDuration = random.uniform(0.075, 0.175)
-                startTime    = now
-                isMoving     = True
-
-        # repeat for other eye if CRAZY_EYES
-    if CRAZY_EYES:
-            if isMovingR == True:
-                if dtR <= moveDurationR:
-                    scale        = (now - startTimeR) / moveDurationR
-                    # Ease in/out curve: 3*t^2-2*t^3
-                    scale = 3.0 * scale * scale - 2.0 * scale * scale * scale
-                    curXR        = startXR + (destXR - startXR) * scale
-                    curYR        = startYR + (destYR - startYR) * scale
-                else:
-                    startXR      = destXR
-                    startYR      = destYR
-                    curXR        = destXR
-                    curYR        = destYR
-                    holdDurationR = random.uniform(0.1, 1.1)
-                    startTimeR    = now
-                    isMovingR     = False
-            else:
-                if dtR >= holdDurationR:
-                    destXR        = random.uniform(-30.0, 30.0)
-                    n             = math.sqrt(900.0 - destXR * destXR)
-                    destYR        = random.uniform(-n, n)
-                    moveDurationR = random.uniform(0.075, 0.175)
-                    startTimeR    = now
-                    isMovingR     = True
+    if CRAZY_EYES: # repeat for other eye if CRAZY_EYES
+        right_eye.update_position(now)
 
     # Regenerate iris geometry only if size changed by >= 1/4 pixel
     if abs(p - prevPupilScale) >= irisRegenThreshold:
@@ -429,64 +287,59 @@ def frame(p):
         timeOfLastBlink = now
         duration = random.uniform(0.035, 0.06) # duration = random.uniform(0.035, 1.00)
 
-        if blinkStateLeft != EN_BLINKING:
-            blinkStateLeft, blinkStartTimeLeft, blinkDurationLeft = (EN_BLINKING, now, duration)
-        if blinkStateRight != EN_BLINKING:
-            blinkStateRight, blinkStartTimeRight, blinkDurationRight = (EN_BLINKING, now, duration)
+        if left_eye.blink_state != EN_BLINKING: left_eye.start_blink(now , duration)
+        if right_eye.blink_state != EN_BLINKING: right_eye.start_blink(now , duration)
 
         timeToNextBlink = duration * 3 + random.uniform(0.0, 4.0) # timeToNextBlink = duration * 3 + random.uniform(0.0, 5.0)
 
-    blinkStateLeft, blinkStartTimeLeft, blinkDurationLeft = update_blink(blinkStateLeft, blinkStartTimeLeft, blinkDurationLeft, WINK_L_PIN, now)
-    blinkStateRight, blinkStartTimeRight, blinkDurationRight = update_blink(blinkStateRight, blinkStartTimeRight, blinkDurationRight, WINK_R_PIN, now)
+    left_eye.update_blink(WINK_L_PIN, now)
+    right_eye.update_blink(WINK_R_PIN, now)
 
     if BLINK_PIN >= 0 and GPIO.input(BLINK_PIN) == GPIO.LOW:
         duration = random.uniform(0.035, 0.06)
 
-        if blinkStateLeft == NO_BLINK:
-            blinkStateLeft, blinkStartTimeLeft, blinkDurationLeft = (EN_BLINKING, now, duration)
-        if blinkStateRight == NO_BLINK:
-            blinkStateRight, blinkStartTimeRight, blinkDurationRight = (EN_BLINKING, now, duration)
+        if left_eye.blink_state == NO_BLINK: left_eye.start_blink(now , duration)
+        if right_eye.blink_state == NO_BLINK: right_eye.start_blink(now , duration)
 # ----------------------------------------------------------------------------------------------------------------------
     """
     Keeps the upper eyelid in sync with the eye. I think
     """
 
     if TRACKING:
-        n = 0.4 - curY / 60.0
-        n = max(0.0, min(n, 1.0)) # if   n < 0.0: n = 0.0 elif n > 1.0: n = 1.0
-        trackingPos = (trackingPos * 3.0 + n) * 0.25
+        n = 0.4 - left_eye.cur_y / 60.0
+        n = max(0.0, min(n, 1.0))
+        left_eye.tracking_pos = (left_eye.tracking_pos * 3.0 + n) * 0.25
 
         if CRAZY_EYES:
-            n = 0.4 - curYR / 60.0
-            n = max(0.0, min(n, 1.0)) # if   n < 0.0: n = 0.0 elif n > 1.0: n = 1.0
-            trackingPosR = (trackingPosR * 3.0 + n) * 0.25
+            n = 0.4 - right_eye.cur_y / 60.0
+            n = max(0.0, min(n, 1.0))
+            right_eye.tracking_pos = (right_eye.tracking_pos * 3.0 + n) * 0.25
 
 # ----------------------------------------------------------------------------------------------------------------------
-    if blinkStateLeft:
-        n = (now - blinkStartTimeLeft) / blinkDurationLeft
+    if left_eye.blink_state:
+        n = (now - left_eye.blink_start_time) / left_eye.blink_duration
         if n > 1.0: n = 1.0
-        if blinkStateLeft == DE_BLINKING: n = 1.0 - n
+        if left_eye.blink_state == DE_BLINKING: n = 1.0 - n
     else:
         n = 0.0
 
-    newLeftUpperLidWeight = trackingPos + (n * (1.0 - trackingPos))
-    newLeftLowerLidWeight = (1.0 - trackingPos) + (n * trackingPos)
+    newLeftUpperLidWeight = left_eye.tracking_pos + (n * (1.0 - left_eye.tracking_pos))
+    newLeftLowerLidWeight = (1.0 - left_eye.tracking_pos) + (n * left_eye.tracking_pos)
 
 
-    if blinkStateRight:
-        n = (now - blinkStartTimeRight) / blinkDurationRight
+    if right_eye.blink_state:
+        n = (now - right_eye.blink_start_time) / right_eye.blink_duration
         if n > 1.0: n = 1.0
-        if blinkStateRight == DE_BLINKING: n = 1.0 - n
+        if right_eye.blink_state == DE_BLINKING: n = 1.0 - n
     else:
         n = 0.0
 
     if CRAZY_EYES:
-        newRightUpperLidWeight = trackingPosR + (n * (1.0 - trackingPosR))
-        newRightLowerLidWeight = (1.0 - trackingPosR) + (n * trackingPosR)
+        newRightUpperLidWeight = right_eye.tracking_pos + (n * (1.0 - right_eye.tracking_pos))
+        newRightLowerLidWeight = (1.0 - right_eye.tracking_pos) + (n * right_eye.tracking_pos)
     else:
-        newRightUpperLidWeight = trackingPos + (n * (1.0 - trackingPos))
-        newRightLowerLidWeight = (1.0 - trackingPos) + (n * trackingPos)
-
+        newRightUpperLidWeight = left_eye.tracking_pos + (n * (1.0 - left_eye.tracking_pos))
+        newRightLowerLidWeight = (1.0 - left_eye.tracking_pos) + (n * left_eye.tracking_pos)
 
 # ----------------------------------------------------------------------------------------------------------------------
     if (luRegen or (abs(newLeftUpperLidWeight - prevLeftUpperLidWeight) >= upperLidRegenThreshold)):
@@ -545,36 +398,37 @@ def frame(p):
     else:
         rlRegen = False
 
+# ----------------------------------------------------------------------------------------------------------------------
 
     # Right eye (on screen left)
     if CRAZY_EYES:
-        rightIris.rotateToX(curYR)
-        rightIris.rotateToY(curXR - CONVERGENCE)
+        rightIris.rotateToX(right_eye.cur_y)
+        rightIris.rotateToY(right_eye.cur_x - CONVERGENCE)
         # rightIris.rotateToZ(180) #Flip Right Eye Horizontally
         rightIris.draw()
 
-        rightEye.rotateToX(curYR)
-        rightEye.rotateToY(curXR - CONVERGENCE)
+        rightEye.rotateToX(right_eye.cur_y)
+        rightEye.rotateToY(right_eye.cur_x - CONVERGENCE)
     else:
-        rightIris.rotateToX(curY)
-        rightIris.rotateToY(curX - CONVERGENCE)
+        rightIris.rotateToX(left_eye.cur_y)
+        rightIris.rotateToY(left_eye.cur_x - CONVERGENCE)
         # rightIris.rotateToZ(180) #Flip Right Eye Horizontally
         rightIris.draw()
 
-        rightEye.rotateToX(curY)
-        rightEye.rotateToY(curX - CONVERGENCE)
+        rightEye.rotateToX(left_eye.cur_y)
+        rightEye.rotateToY(left_eye.cur_x - CONVERGENCE)
 
     # rightEye.rotateToZ(180) #Flip Right Eye Horizontally
     rightEye.draw()
 
     # Left eye (on screen right)
-    leftIris.rotateToX(curY)
-    leftIris.rotateToY(curX + CONVERGENCE)
+    leftIris.rotateToX(left_eye.cur_y)
+    leftIris.rotateToY(left_eye.cur_x + CONVERGENCE)
     # leftIris.rotateToZ(180) #Flip Left Eye Horizontally
     leftIris.draw()
 
-    leftEye.rotateToX(curY)
-    leftEye.rotateToY(curX + CONVERGENCE)
+    leftEye.rotateToX(left_eye.cur_y)
+    leftEye.rotateToY(left_eye.cur_x + CONVERGENCE)
     # leftEye.rotateToZ(180) #Flip Left Eye Horizontally
     leftEye.draw()
 
@@ -588,12 +442,6 @@ def frame(p):
     leftLowerEyelid.draw()
     rightUpperEyelid.draw()
     rightLowerEyelid.draw()
-
-    k = mykeys.read()
-    if k==27:
-        mykeys.close()
-        DISPLAY.stop()
-        exit(0)
 
 
 def split_pupil(start_value, end_value, duration, range):
@@ -652,3 +500,9 @@ def main():
             frame(pupil_value)
 
         current_pupil_scale = pupil_value
+
+        k = mykeys.read()
+        if k == 27:
+            mykeys.close()
+            DISPLAY.stop()
+            exit(0)

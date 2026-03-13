@@ -1,7 +1,9 @@
 from unittest.mock import MagicMock
 import sys
+import types
 import ctypes.util
 from KeyboardGPIO import KeyboardGPIO
+from mock_bonnet import MockBonnet
 
 # Redirect pi3d's GLES library lookup to macOS native OpenGL so that
 # SDL2-created contexts share the same GL implementation.
@@ -18,8 +20,10 @@ _rpi  = MagicMock()
 _rpi.GPIO = _gpio
 sys.modules['RPi']                        = _rpi
 sys.modules['RPi.GPIO']                   = _gpio
-# sys.modules['RPi']                        = MagicMock()
-# sys.modules['RPi.GPIO']                   = MagicMock()
+
+_seb = types.ModuleType('snake_eyes_bonnet')
+_seb.SnakeEyesBonnet = MockBonnet
+sys.modules['snake_eyes_bonnet'] = _seb
 
 sys.modules['board']                      = MagicMock()
 sys.modules['busio']                      = MagicMock()

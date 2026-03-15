@@ -1,0 +1,1013 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Dragon Eyes — Sequence Editor</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0d1117; color: #c9d1d9;
+      font-family: 'Courier New', monospace; font-size: 13px;
+      display: flex; padding: 20px; gap: 20px;
+      align-items: flex-start; height: 100vh; overflow: hidden;
+    }
+
+    /* ── Canvas column ── */
+    .canvas-col { display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
+    canvas { border: 1px solid #30363d; cursor: crosshair; display: block; }
+
+    .toolbar {
+      display: flex; align-items: center; gap: 10px;
+      background: #161b22; border: 1px solid #30363d;
+      border-radius: 6px; padding: 8px 12px;
+    }
+    .play-btn {
+      background: #238636; border: 1px solid #2ea043; border-radius: 6px;
+      color: #fff; cursor: pointer; font-size: 16px;
+      width: 36px; height: 36px; display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .play-btn:hover { background: #2ea043; }
+    .play-btn:disabled { background: #21262d; border-color: #30363d; color: #484f58; cursor: default; }
+    .play-time { font-size: 12px; color: #8b949e; min-width: 90px; }
+    .progress-wrap {
+      flex: 1; height: 6px; background: #21262d;
+      border-radius: 3px; overflow: hidden; cursor: pointer;
+    }
+    .progress-bar { height: 100%; background: #2ea043; width: 0%; transition: width 0.05s; border-radius: 3px; }
+    .toolbar-sep { width: 1px; height: 20px; background: #30363d; margin: 0 4px; }
+    .c1-label { display: flex; align-items: center; gap: 6px; color: #8b949e; font-size: 12px; cursor: pointer; white-space: nowrap; }
+    .c1-label input { accent-color: #a371f7; }
+
+    /* ── Panel ── */
+    .panel { display: flex; flex-direction: column; gap: 12px; width: 300px; overflow-y: auto; max-height: calc(100vh - 40px); }
+    .section { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 12px; }
+    .section h3 { color: #58a6ff; margin-bottom: 10px; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; }
+    .section.editing { border-color: #e3b341; }
+    .section.editing h3 { color: #e3b341; }
+
+    .field { display: flex; align-items: center; margin-bottom: 8px; gap: 8px; }
+    label { color: #8b949e; width: 110px; flex-shrink: 0; }
+    input[type="number"] {
+      background: #0d1117; border: 1px solid #30363d; border-radius: 4px;
+      color: #c9d1d9; padding: 4px 8px; width: 100%; font-family: inherit; font-size: 13px;
+    }
+    input:focus { outline: none; border-color: #58a6ff; }
+
+    .btn {
+      background: #21262d; border: 1px solid #30363d; border-radius: 6px;
+      color: #c9d1d9; cursor: pointer; font-family: inherit; font-size: 13px;
+      padding: 6px 12px; width: 100%;
+    }
+    .btn:hover { background: #30363d; }
+    .btn.primary { background: #238636; border-color: #2ea043; color: #fff; }
+    .btn.primary:hover { background: #2ea043; }
+    .btn.warn { background: #9e6a03; border-color: #e3b341; color: #fff; }
+    .btn.warn:hover { background: #b07d0a; }
+    .btn.sm { width: auto; padding: 2px 7px; font-size: 11px; }
+    .btn.danger { color: #f85149; border-color: transparent; background: transparent; }
+    .btn.danger:hover { background: rgba(248,81,73,0.1); }
+
+    .modes { display: flex; gap: 6px; margin-bottom: 10px; }
+    .mode-btn { width: auto; padding: 5px 12px; font-size: 12px; }
+    .mode-btn.active { background: #1f6feb; border-color: #388bfd; color: #fff; }
+
+    .coords { font-size: 11px; color: #6e7681; margin-top: 6px; }
+    .pt-label { font-size: 12px; color: #6e7681; font-style: italic; margin-top: 4px; }
+    .pt-label.set { color: #7ee787; font-style: normal; }
+
+    .kf-list { max-height: 180px; overflow-y: auto; }
+    .kf-item {
+      display: flex; align-items: center; padding: 5px 6px;
+      border-radius: 4px; margin-bottom: 3px; background: #0d1117; font-size: 12px;
+      border: 1px solid transparent; cursor: pointer;
+    }
+    .kf-item:hover { background: #161b22; }
+    .kf-item.hovered { border-color: #30363d; }
+    .kf-item.selected { border-color: #e3b341; background: #161b22; }
+    .kf-dot { width: 9px; height: 9px; border-radius: 50%; margin-right: 8px; flex-shrink: 0; }
+    .kf-text { flex: 1; }
+    .kf-meta { color: #6e7681; font-size: 11px; }
+    .kf-actions { display: flex; gap: 3px; }
+
+    .checkbox-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; color: #8b949e; }
+    .checkbox-row input[type="checkbox"] { accent-color: #58a6ff; }
+    .checkbox-row input[type="number"] { width: 70px; flex-shrink: 0; }
+
+    .row { display: flex; gap: 6px; }
+    .row .btn { flex: 1; }
+
+    .play-btn-sm {
+      background: #238636; border: 1px solid #2ea043; border-radius: 4px;
+      color: #fff; cursor: pointer; font-size: 12px;
+      width: 24px; height: 20px; display: inline-flex; align-items: center; justify-content: center;
+      vertical-align: middle; margin-left: 6px; padding: 0;
+    }
+    .play-btn-sm:hover { background: #2ea043; }
+    .play-btn-sm:disabled { background: #21262d; border-color: #30363d; color: #484f58; cursor: default; }
+
+    .import-area {
+      width: 100%; min-height: 80px; background: #0d1117; border: 1px solid #30363d;
+      border-radius: 4px; color: #c9d1d9; padding: 8px; font-family: inherit;
+      font-size: 11px; resize: vertical; margin-bottom: 8px;
+    }
+    .import-area:focus { outline: none; border-color: #58a6ff; }
+    .import-error { font-size: 11px; color: #f85149; margin-top: 6px; min-height: 16px; }
+    .import-ok    { font-size: 11px; color: #7ee787; margin-top: 6px; min-height: 16px; }
+
+    .hint { font-size: 11px; color: #484f58; margin-top: 6px; line-height: 1.5; }
+    .spacer { height: 4px; }
+  </style>
+</head>
+<body>
+
+<!-- ── Canvas + toolbar ── -->
+<div class="canvas-col">
+  <canvas id="canvas"></canvas>
+  <div class="toolbar">
+    <button class="play-btn" id="btnPlay" onclick="togglePlay()" disabled title="Play (Space)">▶</button>
+    <div class="progress-wrap" id="progressWrap" onclick="scrubProgress(event)">
+      <div class="progress-bar" id="progressBar"></div>
+    </div>
+    <span class="play-time" id="playTime">0.0 / 0.0s</span>
+    <div class="toolbar-sep"></div>
+    <label class="c1-label" title="Auto-compute control points for smooth joins between segments">
+      <input type="checkbox" id="c1Toggle" onchange="onC1Change()"> C1 smooth
+    </label>
+  </div>
+</div>
+
+<!-- ── Side panel ── -->
+<div class="panel">
+
+  <!-- Click mode -->
+  <div class="section">
+    <h3>Click Mode</h3>
+    <div class="modes">
+      <button class="btn mode-btn active" id="btnDest" onclick="setMode('destination')">Destination</button>
+      <button class="btn mode-btn" id="btnCtrl" onclick="setMode('control')">Control Pt</button>
+    </div>
+    <div class="coords" id="coordsDisplay">— hover over canvas —</div>
+    <div class="pt-label" id="destLabel">Destination: not set</div>
+    <div class="pt-label" id="ctrlLabel">Control: none (optional)</div>
+    <div class="hint">Click canvas to place.<br>Hover/click existing dot to edit.</div>
+  </div>
+
+  <!-- Keyframe form (new or edit) -->
+  <div class="section" id="kfSection">
+    <h3 id="kfFormTitle">New Keyframe</h3>
+    <div class="field">
+      <label>move_duration</label>
+      <input type="number" id="moveDur" value="1.0" step="0.1" min="0.1" oninput="onKfFieldChange()">
+    </div>
+    <div class="field">
+      <label>hold_duration</label>
+      <input type="number" id="holdDur" value="1.0" step="0.1" min="0.0" oninput="onKfFieldChange()">
+    </div>
+    <div class="checkbox-row">
+      <input type="checkbox" id="usePupil" onchange="onKfFieldChange()">
+      <label for="usePupil" style="width:auto">pupil_scale</label>
+      <input type="number" id="pupilVal" value="0.5" step="0.05" min="0" max="1" oninput="onKfFieldChange()">
+    </div>
+    <div class="row" id="kfFormBtns">
+      <button class="btn primary" id="btnAddKf" onclick="addKeyframe()">+ Add Keyframe</button>
+      <button class="btn sm" onclick="clearCurrent()" title="Clear">✕</button>
+    </div>
+    <div id="kfEditBtns" style="display:none">
+      <div class="spacer"></div>
+      <button class="btn warn" onclick="doneEditing()">✓ Done Editing</button>
+    </div>
+  </div>
+
+  <!-- Sequence list + playback controls -->
+  <div class="section">
+    <h3>Sequence &nbsp;<span style="color:#6e7681;font-weight:normal;font-size:11px" id="kfCount">0 keyframes · loops</span><button class="play-btn-sm" id="btnPlay2" onclick="togglePlay()" disabled title="Play (Space)">▶</button></h3>
+    <div class="kf-list" id="kfList"></div>
+    <div class="row" style="margin-top:8px">
+      <button class="btn" onclick="clearAll()">Clear All</button>
+      <button class="btn" id="btnCopyJson" onclick="copyJSON()">Copy JSON</button>
+    </div>
+  </div>
+
+  <!-- Import -->
+  <div class="section">
+    <h3>Import JSON</h3>
+    <textarea class="import-area" id="importArea" placeholder='Paste JSON here — accepts {"data":[...]} or bare [...]'></textarea>
+    <div class="row">
+      <button class="btn primary" onclick="doImport()">Load</button>
+      <button class="btn" onclick="el('importArea').value=''; el('importMsg').textContent=''">Clear</button>
+    </div>
+    <div id="importMsg" class="import-error"></div>
+  </div>
+
+
+</div>
+
+<script>
+// ─────────────────────────────────────────────────────────────────────
+// Canvas + coordinate system
+// ─────────────────────────────────────────────────────────────────────
+const canvas = document.getElementById('canvas');
+const ctx    = canvas.getContext('2d');
+const WR     = 30;          // world range −30 to +30
+const HIT    = 14;          // hit-test radius in canvas pixels
+
+let C, M, ACTIVE, SCALE;
+
+function resizeCanvas() {
+  const size = window.innerHeight - 40;
+  canvas.width = canvas.height = C = size;
+  M      = Math.round(size * 0.084);
+  ACTIVE = C - 2 * M;
+  SCALE  = ACTIVE / 2 / WR;
+  draw();
+}
+window.addEventListener('resize', resizeCanvas);
+
+// World ↔ canvas (top-left = +30,+30; positive X = LEFT, positive Y = UP)
+const w2c = (wx, wy) => [C/2 - wx * SCALE, C/2 - wy * SCALE];
+const c2w = (px, py) => [-(px - C/2) / SCALE, -(py - C/2) / SCALE];
+
+function eventToCanvas(e) {
+  const r = canvas.getBoundingClientRect();
+  return [
+    (e.clientX - r.left) * (canvas.width  / r.width),
+    (e.clientY - r.top)  * (canvas.height / r.height),
+  ];
+}
+
+const clampW    = v => Math.max(-WR, Math.min(WR, v));
+// Control points can extend beyond the graph boundary (canvas margin gives ~6 extra units).
+// Note: a Bézier's extent is bounded by its convex hull, so a control point outside ±30
+// will cause the curve to exit the graph. Use with intention.
+const clampCtrl = v => Math.max(-WR * 3, Math.min(WR * 3, v));
+const snap      = v => Math.round(v);
+
+// ─────────────────────────────────────────────────────────────────────
+// State
+// ─────────────────────────────────────────────────────────────────────
+const state = {
+  keyframes: [],
+  dest:      null,   // pending new destination [x,y]
+  control:   null,   // pending new control [x,y]
+  mode:      'destination',
+  hover:     null,   // mouse world pos [x,y]
+
+  // Edit
+  selected:  null,   // index of keyframe being edited
+  hoveredKf: null,   // index of keyframe under mouse
+  drag:      null,   // {type:'dest'|'ctrl', index}
+
+  // Playback
+  playing:   false,
+  playTime:  0,
+
+  // C1 smooth joins
+  c1Mode:    false,
+};
+
+let _lastTs  = null;
+let _animId  = null;
+let _didDrag = false;
+
+const PALETTE  = ['#58a6ff','#f0883e','#a371f7','#3fb950','#e3b341','#f85149','#39d353','#db61a2'];
+const kfColor  = i => PALETTE[i % PALETTE.length];
+
+// ─────────────────────────────────────────────────────────────────────
+// C1 continuity helper
+// effectiveControl(i) returns the control point actually used for
+// keyframe[i]'s curve — either the user-authored one, or the C1
+// reflection of the previous keyframe's control point across P₂.
+// ─────────────────────────────────────────────────────────────────────
+function effectiveControl(i) {
+  const kf = state.keyframes[i];
+  if (!state.c1Mode || i === 0) return kf.control || null;
+  const prev = state.keyframes[i - 1];
+  if (!prev || !prev.control) return kf.control || null;
+  const p2 = prev.destination, p1 = prev.control;
+  return [2*p2[0] - p1[0], 2*p2[1] - p1[1]];
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Playback
+// ─────────────────────────────────────────────────────────────────────
+function getTotalDuration() {
+  return state.keyframes.reduce((s, k) => s + k.move_duration + k.hold_duration, 0);
+}
+
+function getPositionAtTime(t) {
+  if (!state.keyframes.length) return [0, 0];
+  const total = getTotalDuration();
+  if (total <= 0) return [0, 0];
+  let elapsed = t % total;
+
+  for (let i = 0; i < state.keyframes.length; i++) {
+    const kf   = state.keyframes[i];
+    const from = i === 0 ? [0, 0] : state.keyframes[i-1].destination;
+    const ctrl = effectiveControl(i);
+    const to   = kf.destination;
+
+    if (elapsed <= kf.move_duration) {
+      let s = elapsed / kf.move_duration;
+      s = 3*s*s - 2*s*s*s; // smoothstep
+      if (ctrl) {
+        const u = 1 - s;
+        return [u*u*from[0] + 2*u*s*ctrl[0] + s*s*to[0],
+                u*u*from[1] + 2*u*s*ctrl[1] + s*s*to[1]];
+      }
+      return [from[0] + (to[0]-from[0])*s, from[1] + (to[1]-from[1])*s];
+    }
+    elapsed -= kf.move_duration;
+
+    if (elapsed <= kf.hold_duration) return [...to];
+    elapsed -= kf.hold_duration;
+  }
+  return [...state.keyframes[state.keyframes.length-1].destination];
+}
+
+// Which keyframe index is active at elapsed time t
+function getActiveKfIndex(t) {
+  const total = getTotalDuration();
+  if (!total) return 0;
+  let elapsed = t % total;
+  for (let i = 0; i < state.keyframes.length; i++) {
+    const kf = state.keyframes[i];
+    if (elapsed <= kf.move_duration + kf.hold_duration) return i;
+    elapsed -= kf.move_duration + kf.hold_duration;
+  }
+  return state.keyframes.length - 1;
+}
+
+function animLoop(ts) {
+  const dt = _lastTs === null ? 0 : (ts - _lastTs) / 1000;
+  _lastTs = ts;
+  const total = getTotalDuration();
+  if (total > 0) state.playTime = (state.playTime + dt) % total;
+  updatePlayTime();
+  draw();
+  if (state.playing) _animId = requestAnimationFrame(animLoop);
+}
+
+function togglePlay() {
+  if (!state.keyframes.length) return;
+  state.playing = !state.playing;
+  if (state.playing) {
+    _lastTs = null;
+    _animId = requestAnimationFrame(animLoop);
+  } else {
+    cancelAnimationFrame(_animId);
+    _lastTs = null;
+  }
+  updatePlayButton();
+}
+
+function updatePlayButton() {
+  const label    = state.playing ? '⏸' : '▶';
+  const disabled = state.keyframes.length === 0;
+  for (const id of ['btnPlay', 'btnPlay2']) {
+    const btn = el(id);
+    btn.textContent = label;
+    btn.disabled    = disabled;
+  }
+}
+
+function updatePlayTime() {
+  const total = getTotalDuration();
+  el('playTime').textContent = `${state.playTime.toFixed(1)} / ${total.toFixed(1)}s`;
+  el('progressBar').style.width = total > 0 ? `${(state.playTime / total * 100).toFixed(1)}%` : '0%';
+}
+
+function scrubProgress(e) {
+  if (!state.keyframes.length) return;
+  const r     = el('progressWrap').getBoundingClientRect();
+  const ratio = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+  state.playTime = ratio * getTotalDuration();
+  updatePlayTime();
+  draw();
+}
+
+// Spacebar play/pause — ignore when typing in an input
+document.addEventListener('keydown', e => {
+  if (e.code === 'Space' && document.activeElement.tagName !== 'INPUT'
+                         && document.activeElement.tagName !== 'TEXTAREA') {
+    e.preventDefault();
+    if (state.keyframes.length) togglePlay();
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// Edit mode
+// ─────────────────────────────────────────────────────────────────────
+function selectKeyframe(i) {
+  state.selected = i;
+  const kf = state.keyframes[i];
+  el('kfFormTitle').textContent = `✎ Editing #${i+1}`;
+  el('kfSection').classList.add('editing');
+  el('moveDur').value  = kf.move_duration;
+  el('holdDur').value  = kf.hold_duration;
+  el('usePupil').checked = kf.pupil_scale != null;
+  el('pupilVal').value   = kf.pupil_scale ?? 0.5;
+  el('kfFormBtns').style.display = 'none';
+  el('kfEditBtns').style.display = 'block';
+  // Show dest/ctrl labels for selected kf
+  el('destLabel').className = 'pt-label set';
+  el('destLabel').textContent = `Destination: [${kf.destination[0]}, ${kf.destination[1]}]`;
+  const ctrl = kf.control;
+  el('ctrlLabel').className = ctrl ? 'pt-label set' : 'pt-label';
+  el('ctrlLabel').textContent = ctrl ? `Control: [${ctrl[0]}, ${ctrl[1]}]` : 'Control: none';
+  updateUI();
+}
+
+function doneEditing() {
+  state.selected = null;
+  el('kfFormTitle').textContent = 'New Keyframe';
+  el('kfSection').classList.remove('editing');
+  el('kfFormBtns').style.display = 'flex';
+  el('kfEditBtns').style.display = 'none';
+  clearCurrent();
+  updateUI();
+}
+
+// Live-apply duration/pupil changes to selected keyframe
+function onKfFieldChange() {
+  if (state.selected === null) return;
+  const kf = state.keyframes[state.selected];
+  kf.move_duration = parseFloat(el('moveDur').value) || 1.0;
+  kf.hold_duration = parseFloat(el('holdDur').value) || 1.0;
+  kf.pupil_scale   = el('usePupil').checked ? parseFloat(el('pupilVal').value) : undefined;
+  if (kf.pupil_scale === undefined) delete kf.pupil_scale;
+  updateUI();
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// C1 mode
+// ─────────────────────────────────────────────────────────────────────
+function onC1Change() {
+  state.c1Mode = el('c1Toggle').checked;
+  updateUI();
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Canvas mouse events
+// ─────────────────────────────────────────────────────────────────────
+canvas.addEventListener('mousedown', e => {
+  _didDrag = false;
+  const [px, py] = eventToCanvas(e);
+
+  // Check drag handles on the selected keyframe first
+  if (state.selected !== null) {
+    const kf = state.keyframes[state.selected];
+    const [dx, dy] = w2c(...kf.destination);
+    if (Math.hypot(px-dx, py-dy) < HIT) {
+      state.drag = { type: 'dest', index: state.selected };
+      canvas.style.cursor = 'grabbing';
+      return;
+    }
+    // Control point drag — only if user-authored (not C1-computed)
+    if (kf.control && !state.c1Mode) {
+      const [cx, cy] = w2c(...kf.control);
+      if (Math.hypot(px-cx, py-cy) < HIT) {
+        state.drag = { type: 'ctrl', index: state.selected };
+        canvas.style.cursor = 'grabbing';
+        return;
+      }
+    }
+  }
+
+  // Check if clicking any keyframe dot to select it
+  for (let i = 0; i < state.keyframes.length; i++) {
+    const [dx, dy] = w2c(...state.keyframes[i].destination);
+    if (Math.hypot(px-dx, py-dy) < HIT) {
+      selectKeyframe(i);
+      return;
+    }
+  }
+});
+
+canvas.addEventListener('mousemove', e => {
+  const [px, py] = eventToCanvas(e);
+  const [wx, wy] = c2w(px, py);
+
+  // Dragging
+  if (state.drag) {
+    _didDrag = true;
+    const kf = state.keyframes[state.drag.index];
+    if (state.drag.type === 'dest') {
+      const pt = [snap(clampW(wx)), snap(clampW(wy))];
+      kf.destination = pt;
+      el('destLabel').className = 'pt-label set';
+      el('destLabel').textContent = `Destination: [${pt[0]}, ${pt[1]}]`;
+    } else {
+      const pt = [snap(clampCtrl(wx)), snap(clampCtrl(wy))];
+      kf.control = pt;
+      el('ctrlLabel').className = 'pt-label set';
+      el('ctrlLabel').textContent = `Control: [${pt[0]}, ${pt[1]}]`;
+    }
+    updateUI();
+    return;
+  }
+
+  // Hover detection over existing dots
+  state.hoveredKf = null;
+  for (let i = 0; i < state.keyframes.length; i++) {
+    const [dx, dy] = w2c(...state.keyframes[i].destination);
+    if (Math.hypot(px-dx, py-dy) < HIT) {
+      state.hoveredKf = i;
+      canvas.style.cursor = 'pointer';
+      break;
+    }
+  }
+  if (state.hoveredKf === null) {
+    // Also check selected kf's control point
+    if (state.selected !== null) {
+      const kf = state.keyframes[state.selected];
+      if (kf.control && !state.c1Mode) {
+        const [cx, cy] = w2c(...kf.control);
+        if (Math.hypot(px-cx, py-cy) < HIT) {
+          canvas.style.cursor = 'grab';
+          state.hover = [clampW(wx), clampW(wy)];
+          document.getElementById('coordsDisplay').textContent = `[${snap(clampW(wx))}, ${snap(clampW(wy))}]`;
+          draw();
+          return;
+        }
+      }
+    }
+    canvas.style.cursor = 'crosshair';
+  }
+
+  state.hover = [clampW(wx), clampW(wy)];
+  document.getElementById('coordsDisplay').textContent = `[${snap(clampW(wx))}, ${snap(clampW(wy))}]`;
+  draw();
+});
+
+canvas.addEventListener('mouseup', () => {
+  state.drag = null;
+  canvas.style.cursor = state.hoveredKf !== null ? 'pointer' : 'crosshair';
+});
+
+canvas.addEventListener('mouseleave', () => {
+  state.hover     = null;
+  state.hoveredKf = null;
+  state.drag      = null;
+  document.getElementById('coordsDisplay').textContent = '— hover over canvas —';
+  draw();
+});
+
+// Click — only fires if mouse didn't drag
+canvas.addEventListener('click', e => {
+  if (_didDrag) return;
+  const [wx, wy] = c2w(...eventToCanvas(e));
+  const pt = [snap(clampW(wx)), snap(clampW(wy))];
+
+  // If selected kf: canvas click outside any dot deselects
+  if (state.selected !== null) {
+    // Check if still on the selected kf's dot
+    const [dx, dy] = w2c(...state.keyframes[state.selected].destination);
+    const [px, py] = eventToCanvas(e);
+    if (Math.hypot(px-dx, py-dy) >= HIT) {
+      // Place ctrl or deselect? Only deselect if we didn't just select via mousedown
+      // (mousedown already handled selection, so just place points normally)
+    }
+    return; // Let mousedown handle selection; don't place new points while editing
+  }
+
+  if (state.mode === 'destination') {
+    state.dest = pt;
+    el('destLabel').className = 'pt-label set';
+    el('destLabel').textContent = `Destination: [${pt[0]}, ${pt[1]}]`;
+  } else {
+    const cpt = [snap(clampCtrl(wx)), snap(clampCtrl(wy))];
+    state.control = cpt;
+    el('ctrlLabel').className = 'pt-label set';
+    el('ctrlLabel').textContent = `Control: [${cpt[0]}, ${cpt[1]}]`;
+  }
+  draw();
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// Mode
+// ─────────────────────────────────────────────────────────────────────
+function setMode(m) {
+  state.mode = m;
+  el('btnDest').className = 'btn mode-btn' + (m === 'destination' ? ' active' : '');
+  el('btnCtrl').className = 'btn mode-btn' + (m === 'control'     ? ' active' : '');
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Keyframe CRUD
+// ─────────────────────────────────────────────────────────────────────
+function addKeyframe() {
+  if (!state.dest) { alert('Click the canvas to set a destination first.'); return; }
+  const kf = {
+    destination:   state.dest,
+    move_duration: parseFloat(el('moveDur').value) || 1.0,
+    hold_duration: parseFloat(el('holdDur').value) || 1.0,
+  };
+  if (el('usePupil').checked) kf.pupil_scale = parseFloat(el('pupilVal').value);
+  if (state.control)          kf.control     = state.control;
+  state.keyframes.push(kf);
+  clearCurrent();
+  setMode('destination');
+  updateUI();
+}
+
+function clearCurrent() {
+  state.dest = null; state.control = null;
+  el('destLabel').className = 'pt-label';
+  el('destLabel').textContent = 'Destination: not set';
+  el('ctrlLabel').className = 'pt-label';
+  el('ctrlLabel').textContent = 'Control: none (optional)';
+  draw();
+}
+
+function deleteKeyframe(i) {
+  if (state.selected === i) doneEditing();
+  else if (state.selected !== null && state.selected > i) state.selected--;
+  state.keyframes.splice(i, 1);
+  updateUI();
+}
+
+function clearAll() {
+  if (state.keyframes.length && !confirm('Clear all keyframes?')) return;
+  state.keyframes = [];
+  if (state.selected !== null) doneEditing();
+  state.playTime = 0;
+  clearCurrent();
+  updateUI();
+}
+
+function buildJSON() {
+  const exportKfs = state.keyframes.map((kf, i) => {
+    const out = { destination: kf.destination, move_duration: kf.move_duration, hold_duration: kf.hold_duration };
+    if (kf.pupil_scale != null) out.pupil_scale = kf.pupil_scale;
+    const ctrl = effectiveControl(i);
+    if (ctrl) out.control = ctrl;
+    return out;
+  });
+  const lines = exportKfs.map(kf => '    ' + JSON.stringify(kf));
+  return '{\n  "data": [\n' + lines.join(',\n') + '\n  ]\n}';
+}
+
+function copyJSON() {
+  const text = buildJSON();
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = el('btnCopyJson');
+    const orig = btn.textContent;
+    btn.textContent = '✓ Copied';
+    setTimeout(() => btn.textContent = orig, 1000);
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Import
+// ─────────────────────────────────────────────────────────────────────
+function doImport() {
+  const raw = el('importArea').value.trim();
+  const msg = el('importMsg');
+  msg.className = 'import-error';
+  msg.textContent = '';
+
+  if (!raw) { msg.textContent = 'Paste JSON first.'; return; }
+
+  let parsed;
+  try { parsed = JSON.parse(raw); }
+  catch (err) { msg.textContent = `Invalid JSON: ${err.message}`; return; }
+
+  // Accept {"data":[...]} or bare [...]
+  const arr = Array.isArray(parsed) ? parsed
+            : Array.isArray(parsed?.data) ? parsed.data
+            : null;
+  if (!arr) { msg.textContent = 'Expected {"data":[...]} or a bare array.'; return; }
+
+  const loaded = []; const warnings = [];
+  arr.forEach((item, i) => {
+    if (!Array.isArray(item.destination) || item.destination.length < 2) {
+      warnings.push(`#${i+1}: missing destination — skipped`); return;
+    }
+    const dest = item.destination.map(Number);
+    if (dest.some(isNaN)) { warnings.push(`#${i+1}: destination not numeric — skipped`); return; }
+
+    // Clamp and warn
+    const clamped = dest.map(clampW);
+    if (clamped[0] !== dest[0] || clamped[1] !== dest[1])
+      warnings.push(`#${i+1}: destination [${dest}] clamped to [${clamped}]`);
+
+    const kf = {
+      destination:   clamped,
+      move_duration: Math.max(0.01, Number(item.move_duration) || 1.0),
+      hold_duration: Math.max(0,    Number(item.hold_duration) || 1.0),
+    };
+    if (item.pupil_scale != null) {
+      const p = Number(item.pupil_scale);
+      kf.pupil_scale = isNaN(p) ? 0.5 : Math.max(0, Math.min(1, p));
+    }
+    if (Array.isArray(item.control) && item.control.length >= 2) {
+      kf.control = item.control.map(Number).map(clampCtrl);
+    }
+    loaded.push(kf);
+  });
+
+  if (!loaded.length) { msg.textContent = 'No valid keyframes found.'; return; }
+
+  if (state.keyframes.length && !confirm(`Replace ${state.keyframes.length} existing keyframe(s) with ${loaded.length} imported?`)) return;
+
+  if (state.selected !== null) doneEditing();
+  state.keyframes = loaded;
+  state.playTime  = 0;
+  clearCurrent();
+  updateUI();
+
+  msg.className   = 'import-ok';
+  msg.textContent = `Loaded ${loaded.length} keyframe(s).` + (warnings.length ? '\n' + warnings.join('\n') : '');
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// UI refresh
+// ─────────────────────────────────────────────────────────────────────
+function updateUI() {
+  const n = state.keyframes.length;
+  el('kfCount').textContent = `${n} keyframe${n !== 1 ? 's' : ''} · loops`;
+  updatePlayButton();
+  updatePlayTime();
+
+  // Keyframe list
+  const list = el('kfList');
+  list.innerHTML = '';
+  state.keyframes.forEach((kf, i) => {
+    const row = document.createElement('div');
+    row.className = 'kf-item' +
+      (i === state.selected  ? ' selected'  : '') +
+      (i === state.hoveredKf ? ' hovered'   : '');
+    row.onmouseenter = () => { state.hoveredKf = i; draw(); row.classList.add('hovered'); };
+    row.onmouseleave = () => { state.hoveredKf = null; draw(); row.classList.remove('hovered'); };
+    row.onclick = () => selectKeyframe(i);
+
+    const dot = document.createElement('span');
+    dot.className = 'kf-dot'; dot.style.background = kfColor(i);
+
+    const txt = document.createElement('div');
+    txt.className = 'kf-text';
+    let top  = `#${i+1}  →  [${kf.destination[0]}, ${kf.destination[1]}]`;
+    if (effectiveControl(i)) top += state.c1Mode && i > 0 && state.keyframes[i-1].control ? '  ⌒C1' : '  ⌒';
+    let meta = `move ${kf.move_duration}s  hold ${kf.hold_duration}s`;
+    if (kf.pupil_scale != null) meta += `  p:${kf.pupil_scale}`;
+    txt.innerHTML = `<div>${top}</div><div class="kf-meta">${meta}</div>`;
+
+    const actions = document.createElement('div');
+    actions.className = 'kf-actions';
+
+    const editBtn = document.createElement('button');
+    editBtn.className = 'btn sm'; editBtn.textContent = '✎';
+    editBtn.title = 'Edit'; editBtn.onclick = ev => { ev.stopPropagation(); selectKeyframe(i); };
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'btn danger sm'; delBtn.textContent = '✕';
+    delBtn.onclick = ev => { ev.stopPropagation(); deleteKeyframe(i); };
+
+    actions.append(editBtn, delBtn);
+    row.append(dot, txt, actions);
+    list.appendChild(row);
+  });
+
+  draw();
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Drawing
+// ─────────────────────────────────────────────────────────────────────
+function draw() {
+  ctx.clearRect(0, 0, C, C);
+  ctx.fillStyle = '#0d1117';
+  ctx.fillRect(0, 0, C, C);
+
+  drawGrid();
+  drawSequencePaths();
+  drawSequenceDots();
+  drawPreview();
+  drawHoverCrosshair();
+  drawAnimDot();
+}
+
+function drawGrid() {
+  ctx.lineWidth = 1;
+  for (let w = -30; w <= 30; w += 5) {
+    const [gx] = w2c(w, 0);
+    const [, gy] = w2c(0, w);
+    ctx.strokeStyle = w === 0 ? '#30363d' : '#1c2128';
+    ctx.setLineDash(w === 0 ? [4, 4] : []);
+    ctx.beginPath(); ctx.moveTo(gx, M); ctx.lineTo(gx, C-M); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(M, gy); ctx.lineTo(C-M, gy); ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  ctx.strokeStyle = '#30363d'; ctx.lineWidth = 1;
+  ctx.strokeRect(M, M, ACTIVE, ACTIVE);
+
+  ctx.font = '10px Courier New'; ctx.fillStyle = '#484f58';
+  [ { l:'(30,30)',   x:M+4,     y:M+13,    a:'left'  },
+    { l:'(-30,30)',  x:C-M-4,   y:M+13,    a:'right' },
+    { l:'(30,-30)',  x:M+4,     y:C-M-5,   a:'left'  },
+    { l:'(-30,-30)', x:C-M-4,   y:C-M-5,   a:'right' },
+  ].forEach(c => { ctx.textAlign = c.a; ctx.fillText(c.l, c.x, c.y); });
+
+  const [ox, oy] = w2c(0, 0);
+  ctx.fillStyle = '#484f58'; ctx.textAlign = 'left';
+  ctx.fillText('(0,0)', ox+5, oy-5);
+}
+
+function drawSequencePaths() {
+  if (!state.keyframes.length) return;
+  state.keyframes.forEach((kf, i) => {
+    const isSelected = i === state.selected;
+    const isHovered  = i === state.hoveredKf;
+    const alpha = (isSelected || isHovered) ? 1.0 : 0.75;
+    const lw    = (isSelected || isHovered) ? 3   : 2;
+    drawPath(prevDest(i), kf.destination, effectiveControl(i), kfColor(i), alpha, lw);
+  });
+
+  // Loop-back dashed line
+  if (state.keyframes.length > 1) {
+    const [lx, ly] = w2c(...state.keyframes[state.keyframes.length-1].destination);
+    const [fx, fy] = w2c(...state.keyframes[0].destination);
+    ctx.strokeStyle = '#30363d'; ctx.lineWidth = 1; ctx.setLineDash([3, 5]);
+    ctx.beginPath(); ctx.moveTo(lx, ly); ctx.lineTo(fx, fy); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+}
+
+function drawSequenceDots() {
+  if (!state.keyframes.length) return;
+
+  // Origin
+  const [ox, oy] = w2c(0, 0);
+  ctx.fillStyle = '#30363d';
+  ctx.beginPath(); ctx.arc(ox, oy, 5, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#484f58'; ctx.font = '10px Courier New'; ctx.textAlign = 'left';
+  ctx.fillText('eye start', ox+8, oy-5);
+
+  state.keyframes.forEach((kf, i) => {
+    const [dx, dy] = w2c(...kf.destination);
+    const color    = kfColor(i);
+    const isSelected = i === state.selected;
+    const isHovered  = i === state.hoveredKf && !isSelected;
+
+    // Selection/hover ring
+    if (isSelected) {
+      ctx.strokeStyle = '#e3b341'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(dx, dy, 15, 0, Math.PI*2); ctx.stroke();
+    } else if (isHovered) {
+      ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.globalAlpha = 0.5;
+      ctx.beginPath(); ctx.arc(dx, dy, 14, 0, Math.PI*2); ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
+    // Dot
+    ctx.fillStyle = color;
+    ctx.beginPath(); ctx.arc(dx, dy, 10, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#0d1117';
+    ctx.font = 'bold 11px Courier New'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(i+1, dx, dy);
+    ctx.textBaseline = 'alphabetic';
+
+    // Label
+    ctx.fillStyle = color; ctx.font = '11px Courier New'; ctx.textAlign = 'left';
+    ctx.fillText(`[${kf.destination[0]}, ${kf.destination[1]}]`, dx+13, dy-4);
+    if (kf.pupil_scale != null) {
+      ctx.fillStyle = '#6e7681'; ctx.font = '10px Courier New';
+      ctx.fillText(`p:${kf.pupil_scale}`, dx+13, dy+8);
+    }
+
+    // Control point (authored — always shown for selected; otherwise dimmed)
+    if (kf.control) {
+      const [cx, cy] = w2c(...kf.control);
+      ctx.globalAlpha = isSelected ? 1.0 : 0.4;
+      ctx.fillStyle = '#e3b341';
+      ctx.beginPath(); ctx.arc(cx, cy, isSelected ? 6 : 4, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#0d1117';
+      ctx.beginPath(); ctx.arc(cx, cy, 2, 0, Math.PI*2); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
+    // C1-computed control point for NEXT keyframe (shown when C1 mode on and selected)
+    if (state.c1Mode && isSelected && kf.control) {
+      const p2 = kf.destination, p1 = kf.control;
+      const q1 = [2*p2[0]-p1[0], 2*p2[1]-p1[1]];
+      const [qx, qy] = w2c(...q1);
+      ctx.strokeStyle = '#a371f7'; ctx.lineWidth = 1; ctx.setLineDash([2, 3]);
+      ctx.beginPath(); ctx.moveTo(dx, dy); ctx.lineTo(qx, qy); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#a371f7';
+      ctx.beginPath(); ctx.arc(qx, qy, 5, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#484f58'; ctx.font = '10px Courier New'; ctx.textAlign = 'left';
+      ctx.fillText('Q₁', qx+7, qy-3);
+    }
+  });
+}
+
+function drawPreview() {
+  if (!state.dest || state.selected !== null) return;
+  const from = prevDest(state.keyframes.length);
+  const [dx, dy] = w2c(...state.dest);
+  drawPath(from, state.dest, state.control, '#ffffff', 0.85, 2);
+
+  ctx.fillStyle = '#f85149';
+  ctx.beginPath(); ctx.arc(dx, dy, 9, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 11px Courier New';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('D', dx, dy); ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = '#f85149'; ctx.font = '11px Courier New'; ctx.textAlign = 'left';
+  ctx.fillText(`[${state.dest[0]}, ${state.dest[1]}]`, dx+12, dy-4);
+
+  if (state.control) {
+    const [cx, cy] = w2c(...state.control);
+    ctx.fillStyle = '#e3b341';
+    ctx.beginPath(); ctx.arc(cx, cy, 6, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#0d1117'; ctx.beginPath(); ctx.arc(cx, cy, 2, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#e3b341'; ctx.font = '11px Courier New'; ctx.textAlign = 'left';
+    ctx.fillText(`ctrl [${state.control[0]}, ${state.control[1]}]`, cx+9, cy-4);
+  }
+
+  const [fx, fy] = w2c(...from);
+  ctx.fillStyle = '#6e7681'; ctx.beginPath(); ctx.arc(fx, fy, 5, 0, Math.PI*2); ctx.fill();
+}
+
+function drawHoverCrosshair() {
+  if (!state.hover || state.drag) return;
+  const [hx, hy] = w2c(...state.hover);
+  ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.lineWidth = 1; ctx.setLineDash([2, 5]);
+  ctx.beginPath(); ctx.moveTo(hx, M); ctx.lineTo(hx, C-M); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(M, hy); ctx.lineTo(C-M, hy); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = state.mode === 'destination' ? 'rgba(248,81,73,0.35)' : 'rgba(227,179,65,0.35)';
+  ctx.beginPath(); ctx.arc(hx, hy, 5, 0, Math.PI*2); ctx.fill();
+}
+
+function drawAnimDot() {
+  if (!state.playing && state.playTime === 0) return;
+  if (!state.keyframes.length) return;
+  const pos   = getPositionAtTime(state.playTime);
+  const [px, py] = w2c(...pos);
+  const color = kfColor(getActiveKfIndex(state.playTime));
+
+  // Outer glow
+  ctx.globalAlpha = 0.25;
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath(); ctx.arc(px, py, 18, 0, Math.PI*2); ctx.fill();
+  ctx.globalAlpha = 1;
+
+  // Ring in current keyframe color
+  ctx.strokeStyle = color; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.arc(px, py, 10, 0, Math.PI*2); ctx.stroke();
+
+  // White fill
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath(); ctx.arc(px, py, 8, 0, Math.PI*2); ctx.fill();
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Shared helpers
+// ─────────────────────────────────────────────────────────────────────
+function prevDest(i) {
+  return (i === 0 || !state.keyframes.length) ? [0, 0] : state.keyframes[i-1].destination;
+}
+
+function drawPath(from, to, control, color, alpha, lw) {
+  const [fx, fy] = w2c(...from);
+  const [tx, ty] = w2c(...to);
+  ctx.globalAlpha = alpha;
+
+  if (control) {
+    const [cx, cy] = w2c(...control);
+    ctx.strokeStyle = '#484f58'; ctx.lineWidth = 1; ctx.setLineDash([3, 4]);
+    ctx.beginPath(); ctx.moveTo(fx, fy); ctx.lineTo(cx, cy); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(cx, cy); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.strokeStyle = color; ctx.lineWidth = lw;
+    ctx.beginPath(); ctx.moveTo(fx, fy); ctx.quadraticCurveTo(cx, cy, tx, ty); ctx.stroke();
+    drawArrowHead(cx, cy, tx, ty, color);
+  } else {
+    ctx.strokeStyle = color; ctx.lineWidth = lw;
+    ctx.beginPath(); ctx.moveTo(fx, fy); ctx.lineTo(tx, ty); ctx.stroke();
+    drawArrowHead(fx, fy, tx, ty, color);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawArrowHead(ax, ay, tx, ty, color) {
+  const dx = tx-ax, dy = ty-ay, len = Math.hypot(dx, dy);
+  if (len < 1) return;
+  const nx = dx/len, ny = dy/len, s = 8;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(tx, ty);
+  ctx.lineTo(tx - nx*s - ny*s*0.5, ty - ny*s + nx*s*0.5);
+  ctx.lineTo(tx - nx*s + ny*s*0.5, ty - ny*s - nx*s*0.5);
+  ctx.closePath(); ctx.fill();
+}
+
+const el = id => document.getElementById(id);
+
+// ─────────────────────────────────────────────────────────────────────
+resizeCanvas();
+</script>
+</body>
+</html>

@@ -1,21 +1,20 @@
 #!/usr/bin/python
 
 # Animated dragon eyes for Raspberry Pi using pi3d.
-# Per-eye state (position, blink, tracking) is managed by EyeState in eye_state.py.
-# Constants are in constants.py. Hardware is mocked for macOS dev via mock_hardware.py.
+# Per-eye state (position, blink, tracking) is managed by EyeState in state.py.
+# Constants are in constants.py. Hardware is mocked for macOS dev via hardware.py.
 
 import argparse
 import random
 import time
+import json
 import platform
 import RPi.GPIO as GPIO
 from xml.dom.minidom import parse
 
-
 from gfxutil import *
 from snake_eyes_bonnet import SnakeEyesBonnet
-from eye_lid import EyeLidState, EyeLidMesh
-from eye_state import EyeState
+from eye import EyeLidState, EyeLidMesh, EyeState, SequencePlayer
 from constants import *
 
 
@@ -150,8 +149,8 @@ irisZ = zangle(irisPts, eyeRadius)[0] * 0.99 # Get iris Z depth, for later
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Eyelid meshes are likewise temporary; texture coordinates are assigned here but geometry is dynamically regenerated in main loop.
-left_lid_mesh = EyeLidMesh(lidMap, shader, eyePosition, eyeRadius)
-right_lid_mesh = EyeLidMesh(lidMap, shader, -eyePosition, eyeRadius)
+left_lids = EyeLidMesh(lidMap, shader, eyePosition, eyeRadius)
+right_lids = EyeLidMesh(lidMap, shader, -eyePosition, eyeRadius)
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Generate scleras for each eye...start with a 2D shape for lathing...
@@ -176,8 +175,8 @@ for i in range(24):
 # may have a different image map (heterochromia, corneal scar, or the
 # same image map can be offset on one so the repetition isn't obvious).
 leftEye = pi3d.Lathe(path=pts, sides=64)
-# leftEye.set_textures([scleraMap])
-leftEye.set_textures([uvMap])
+leftEye.set_textures([scleraMap])
+# leftEye.set_textures([uvMap])
 leftEye.set_shader(shader)
 re_axis(leftEye, 0)
 
@@ -192,6 +191,9 @@ re_axis(rightEye, 0.5) # Image map offset = 180 degree rotation
 mykeys = pi3d.Keyboard() # For capturing key presses
 left_eye, right_eye = (EyeState(), EyeState())
 
+if CONTROL_MODE == ControlMode.SCRIPTED:
+    sequence_player = SequencePlayer(SEQUENCE_FILE)
+
 frames = 0
 beginningTime = time.time()
 
@@ -199,6 +201,41 @@ rightEye.positionX(-eyePosition)
 rightIris.positionX(-eyePosition)
 leftEye.positionX(eyePosition)
 leftIris.positionX(eyePosition)
+
+# Debug outline: white square border around each eye, drawn in front of all geometry (z=-200)
+_dot_shader = pi3d.Shader("mat_flat")
+
+def _make_eye_outline(x_center):
+    r = eyeRadius
+    verts = [
+        (x_center - r,  r, -200),
+        (x_center + r,  r, -200),
+        (x_center + r, -r, -200),
+        (x_center - r, -r, -200),
+    ]
+    outline = pi3d.Lines(vertices=verts, closed=True, line_width=2)
+    outline.set_shader(_dot_shader)
+    outline.set_material((1, 1, 1))
+    return outline
+
+_left_outline  = _make_eye_outline( eyePosition)
+_right_outline = _make_eye_outline(-eyePosition)
+def _make_dot(color):
+    d = pi3d.Disk(radius=5, sides=20, rx=90, z=1)
+    d.set_shader(_dot_shader)
+    d.set_material(color)
+    return d
+
+_dots = {
+    "left":  {"s": _make_dot((1, 0, 0)), "d": _make_dot((0, 1, 0)), "c": _make_dot((1, 1, 0))},
+    # "right": {"s": _make_dot((0, 1, 0)), "d": _make_dot((1, 0, 0)), "c": _make_dot((1, 1, 0))},
+}
+
+def _project(angle_x, angle_y, eye_x_center):
+    """Map eye rotation angles (degrees) to 2D screen pixel position."""
+    x = eye_x_center - math.sin(math.radians(angle_x)) * eyeRadius
+    y = math.sin(math.radians(angle_y)) * eyeRadius
+    return x, y
 
 prev_pupil_scale          = -1.0 # Force regen on first frame
 left_eye_lids = EyeLidState(upperLidOpenPts, upperLidClosedPts, lowerLidOpenPts, lowerLidClosedPts)
@@ -221,12 +258,20 @@ def frame(pupil_scale):
     if frames % TARGET_FPS == 0 and now > beginningTime:
         print("FPS: {:.2f}".format(frames / (now - beginningTime)))
 
-    if JOYSTICK_X_IN >= 0 and JOYSTICK_Y_IN >= 0:
-        # Eye position from analog inputs
-        left_eye.current.x = -30.0 + bonnet.channel[JOYSTICK_X_IN].value * 60.0
-        left_eye.current.y = -30.0 + bonnet.channel[JOYSTICK_Y_IN].value * 60.0
-    else : # Autonomous eye position
-        left_eye.update_position(now)
+    if frames % TARGET_FPS == 0:
+        print(json.dumps({"eye": left_eye.to_dict()}))
+
+    match CONTROL_MODE:
+        case ControlMode.MANUAL:
+            if JOYSTICK_X_IN >= 0 and JOYSTICK_Y_IN >= 0:
+                left_eye.current.x = -30.0 + bonnet.channel[JOYSTICK_X_IN].value * 60.0
+                left_eye.current.y = -30.0 + bonnet.channel[JOYSTICK_Y_IN].value * 60.0
+
+        case ControlMode.SCRIPTED:
+            sequence_player.update(left_eye, now)
+
+        case ControlMode.RANDOM:
+            left_eye.update_position(now)
 
     if CRAZY_EYES: # repeat for other eye if CRAZY_EYES
         right_eye.update_position(now)
@@ -256,10 +301,10 @@ def frame(pupil_scale):
     """
     if AUTO_BLINK and (now - timeOfLastBlink) >= timeToNextBlink:
         timeOfLastBlink = now
-        duration = random.uniform(0.035, 0.06) # duration = random.uniform(0.035, 1.00)
+        duration = random.uniform(0.035, 0.06) # duration
 
-        if left_eye.blink_state != EN_BLINKING: left_eye.start_blink(now , duration)
-        if right_eye.blink_state != EN_BLINKING: right_eye.start_blink(now , duration)
+        if left_eye.blink_state == NO_BLINK: left_eye.start_blink(now , duration)
+        if right_eye.blink_state == NO_BLINK: right_eye.start_blink(now , duration)
 
         timeToNextBlink = duration * 3 + random.uniform(0.0, 4.0) # timeToNextBlink = duration * 3 + random.uniform(0.0, 5.0)
 
@@ -303,11 +348,11 @@ def frame(pupil_scale):
         newRightUpperLidWeight = left_eye.tracking_pos + (n * (1.0 - left_eye.tracking_pos))
         newRightLowerLidWeight = (1.0 - left_eye.tracking_pos) + (n * left_eye.tracking_pos)
 
-    left_eye_lids.upper.update(left_lid_mesh.upper, upperLidOpenPts, upperLidClosedPts, upperLidEdgePts, newLeftUpperLidWeight, upperLidRegenThreshold, False)
-    left_eye_lids.lower.update(left_lid_mesh.lower, lowerLidOpenPts, lowerLidClosedPts, lowerLidEdgePts, newLeftLowerLidWeight, lowerLidRegenThreshold, False)
+    left_eye_lids.upper.update(left_lids.upper, upperLidOpenPts, upperLidClosedPts, upperLidEdgePts, newLeftUpperLidWeight, upperLidRegenThreshold, False)
+    left_eye_lids.lower.update(left_lids.lower, lowerLidOpenPts, lowerLidClosedPts, lowerLidEdgePts, newLeftLowerLidWeight, lowerLidRegenThreshold, False)
 
-    right_eye_lids.upper.update(right_lid_mesh.upper, upperLidOpenPts, upperLidClosedPts, upperLidEdgePts, newRightUpperLidWeight, upperLidRegenThreshold, True)
-    right_eye_lids.lower.update(right_lid_mesh.lower, lowerLidOpenPts, lowerLidClosedPts, lowerLidEdgePts, newRightLowerLidWeight, lowerLidRegenThreshold, True)
+    right_eye_lids.upper.update(right_lids.upper, upperLidOpenPts, upperLidClosedPts, upperLidEdgePts, newRightUpperLidWeight, upperLidRegenThreshold, True)
+    right_eye_lids.lower.update(right_lids.lower, lowerLidOpenPts, lowerLidClosedPts, lowerLidEdgePts, newRightLowerLidWeight, lowerLidRegenThreshold, True)
 
 # ----------------------------------------------------------------------------------------------------------------------
     # Left eye (on screen right)
@@ -332,19 +377,39 @@ def frame(pupil_scale):
     if ROTATE_EYES:
         leftIris.rotateToZ(ROTATE_DEGREES)
         leftEye.rotateToZ(ROTATE_DEGREES)
-        left_lid_mesh.rotateToZ(ROTATE_DEGREES)
+        left_lids.rotateToZ(ROTATE_DEGREES)
 
         rightIris.rotateToZ(ROTATE_DEGREES)
         rightEye.rotateToZ(ROTATE_DEGREES)
-        right_lid_mesh.rotateToZ(ROTATE_DEGREES)
+        right_lids.rotateToZ(ROTATE_DEGREES)
 
-    leftIris.draw()
-    leftEye.draw()
-    left_lid_mesh.draw()
+    # leftIris.draw()
+    # leftEye.draw()
+    # left_lids.draw()
 
     rightIris.draw()
     rightEye.draw()
-    right_lid_mesh.draw()
+    right_lids.draw()
+
+    _left_outline.draw()
+    # _right_outline.draw()
+
+    # Debug dots — only during saccade, drawn on top by disabling depth test
+    if left_eye.is_moving:
+        # r_eye_state = right_eye if CRAZY_EYES else left_eye
+        pi3d.opengles.glDisable(pi3d.constants.GL_DEPTH_TEST)
+        for eye_state, eye_x, side in (
+            (left_eye,    eyePosition, "left"),
+            # (r_eye_state, -eyePosition, "right"),
+        ):
+            for attr, key in (("start", "s"), ("destination", "d"), ("current", "c")):
+                pt = getattr(eye_state, attr)
+                x, y = _project(pt.x, pt.y, eye_x)
+                _dots[side][key].position(x, y, 1)
+                _dots[side][key].draw()
+        pi3d.opengles.glEnable(pi3d.constants.GL_DEPTH_TEST)
+
+    return True
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Split Pupil -- Recursive simulated pupil response

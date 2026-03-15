@@ -1,0 +1,7 @@
+{
+  "data": [
+    {"destination":[0,0],"move_duration":0.1,"hold_duration":0.1},
+    {"destination":[-18,8],"move_duration":1,"hold_duration":1,"control":[-4,32]},
+    {"destination":[-28,-7],"move_duration":1,"hold_duration":1,"control":[-34,25]}
+  ]
+}

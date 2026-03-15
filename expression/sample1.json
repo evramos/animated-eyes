@@ -1,0 +1,22 @@
+  {
+    "data": [
+      {
+        "destination": [20, 20],
+        "move_duration": 1.0,
+        "hold_duration": 1.0
+      },
+      {
+        "destination": [-20, -20],
+        "move_duration": 0.5,
+        "hold_duration": 2.0,
+        "pupil_scale": 0.8
+      },
+      {
+        "destination": [0, 10],
+        "move_duration": 1.2,
+        "hold_duration": 0.5,
+        "pupil_scale": 0.3,
+        "control": [50, -15]
+      }
+    ]
+  }

@@ -25,7 +25,7 @@ class EyeLidMesh:
         self.lower.rotateToZ(angle)
 
 
-class LidState:
+class _LidState:
     def __init__(self, open_pts, closed_pts, initial_weight=0.5):
         self.prev_pts = points_interp(open_pts, closed_pts, initial_weight)
         self.prev_weight = initial_weight
@@ -47,5 +47,5 @@ class LidState:
 
 class EyeLidState:
     def __init__(self, upper_open, upper_closed, lower_open, lower_closed):
-        self.upper = LidState(upper_open, upper_closed)
-        self.lower = LidState(lower_open, lower_closed)
+        self.upper = _LidState(upper_open, upper_closed)
+        self.lower = _LidState(lower_open, lower_closed)

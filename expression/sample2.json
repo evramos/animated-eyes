@@ -1,0 +1,35 @@
+{
+    "data":
+    [
+        {
+            "destination":
+            [
+                -25,
+                25
+            ],
+            "move_duration": 1,
+            "hold_duration": 1,
+            "pupil_scale": 0.5,
+            "control":
+            [
+                -23,
+                -18
+            ]
+        },
+        {
+            "destination":
+            [
+                11,
+                -2
+            ],
+            "move_duration": 1,
+            "hold_duration": 1,
+            "pupil_scale": 0.5,
+            "control":
+            [
+                19,
+                27
+            ]
+        }
+    ]
+}

@@ -1,0 +1,11 @@
+{
+  "data": [
+    {"destination":[-30,30],"move_duration":1.0,"hold_duration":0.1},
+    {"destination":[-30,-30],"move_duration":1.0,"hold_duration":0.1},
+    {"destination":[30,-30],"move_duration":1.0,"hold_duration":0.1},
+    {"destination":[29,30],"move_duration":1.0,"hold_duration":0.1},
+    {"destination":[-30,30],"move_duration":1.0,"hold_duration":0.1},
+    {"destination":[0,-30],"move_duration":0.5,"hold_duration":0.0,"control":[-28,-27]},
+    {"destination":[0,0],"move_duration":0.5,"hold_duration":0.1,"control":[35,-25]}
+  ]
+}

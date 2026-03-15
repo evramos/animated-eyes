@@ -1,34 +1,8 @@
 import random
 import math
-from dataclasses import dataclass
-
 import RPi.GPIO as GPIO
+from models.point import Point, smoothstep
 from constants import *
-
-@dataclass
-class Point:
-    x: float = 0.0
-    y: float = 0.0
-
-    def copy_from(self, other):
-        self.x = other.x
-        self.y = other.y
-
-    def set(self, x, y):
-        self.x = x
-        self.y = y
-
-    def __add__(self, other):
-        return Point(self.x + other.x, self.y + other.y)
-
-    def __sub__(self, other):
-        return Point(self.x - other.x, self.y - other.y)
-
-    def __mul__(self, scalar):
-        return Point(self.x * scalar, self.y * scalar)
-
-    def __truediv__(self, scalar):
-        return Point(self.x / scalar, self.y / scalar)
 
 
 class EyeState:
@@ -70,8 +44,11 @@ class EyeState:
         if self.is_moving:
             if dt <= self.move_duration:
                 scale = dt / self.move_duration
-                scale = 3.0 * scale * scale - 2.0 * scale * scale * scale
-                self.current = self.start + (self.destination - self.start) * scale
+                scale = smoothstep(scale)
+                self.current.set(
+                    self.start.x + (self.destination.x - self.start.x) * scale,
+                    self.start.y + (self.destination.y - self.start.y) * scale,
+                )
             else:
                 self.start.copy_from(self.destination)
                 self.current.copy_from(self.destination)
@@ -107,7 +84,7 @@ class EyeState:
                 else:
                     self.blink_state += 1
                     if self.blink_state > DE_BLINKING:
-                        self.blink_state = 0
+                        self.blink_state = NO_BLINK
                     else:
                         self.blink_duration *= 2.0
                         self.blink_start_time = now
@@ -126,3 +103,18 @@ class EyeState:
         else:
             n = 0.0
         return n
+
+    def to_dict(self):
+        s, d, c = self.start, self.destination, self.current
+        pos = {"pos": [round(c.x, 2), round(c.y, 2)]} if s == d == c else\
+        {
+            "s": [round(s.x, 2), round(s.y, 2)],
+            "d": [round(d.x, 2), round(d.y, 2)],
+            "c": [round(c.x, 2), round(c.y, 2)],
+        }
+        return {
+            **pos,
+            **({"is_moving": True} if self.is_moving else {}),
+            **({"blink_state": self.blink_state} if self.blink_state else {}),
+            "tracking": round(self.tracking_pos, 3),
+        }

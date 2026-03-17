@@ -86,7 +86,7 @@ class SnakeEyesBonnet(Thread):
 
     def __init__(self, *args, **kwargs):
         """SnakeEyesBonnet constructor."""
-        super(SnakeEyesBonnet, self).__init__(*args, **kwargs) # Thread
+        super(SnakeEyesBonnet, self).__init__(daemon=daemon) # Thread
         self.i2c = busio.I2C(board.SCL, board.SDA)
         self.ads = ADS.ADS1015(self.i2c)
         self.ads.gain = 1

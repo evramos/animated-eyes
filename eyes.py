@@ -8,183 +8,26 @@ import argparse
 import random
 import time
 import json
-import platform
 import RPi.GPIO as GPIO
-from xml.dom.minidom import parse
+import pi3d
 
-from gfxutil import *
-from snake_eyes_bonnet import SnakeEyesBonnet
-from eye import EyeLidState, EyeLidMesh, EyeState, SequencePlayer
+from debug_overlay import DebugOverlay
+from gfxutil import points_interp, points_mesh
+from init import init_gpio, init_adc, init_svg, init_display, init_scene
+from eye import EyeLidState, EyeState, SequencePlayer
 from constants import *
-
-
-# GPIO initialization ------------------------------------------------------
-
-GPIO.setmode(GPIO.BCM)
-if WINK_L_PIN >= 0: GPIO.setup(WINK_L_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-if BLINK_PIN  >= 0: GPIO.setup(BLINK_PIN , GPIO.IN, pull_up_down=GPIO.PUD_UP)
-if WINK_R_PIN >= 0: GPIO.setup(WINK_R_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-
-
-# ADC stuff ----------------------------------------------------------------
-
-# ADC channels are read and stored in a separate thread to avoid slowdown
-# from blocking operations. The animation loop can read at its leisure.
-
-if JOYSTICK_X_IN >= 0 or JOYSTICK_Y_IN >= 0 or PUPIL_IN >= 0:
-    bonnet = SnakeEyesBonnet(daemon=True)
-    bonnet.setup_channel(JOYSTICK_X_IN, reverse=False)
-    bonnet.setup_channel(JOYSTICK_Y_IN, reverse=False)
-    bonnet.setup_channel(PUPIL_IN, reverse=False)
-    bonnet.start()
-
-
-# Load SVG file, extract paths & convert to point lists --------------------
-
-dom               = parse("graphics/dragon-eye.svg")
-view_box          = get_view_box(dom)
-pupilMinPts       = get_points(dom, "pupilMin"      , 32, True , True )
-pupilMaxPts       = get_points(dom, "pupilMax"      , 32, True , True )
-irisPts           = get_points(dom, "iris"          , 32, True , True )
-scleraFrontPts    = get_points(dom, "scleraFront"   ,  0, False, False)
-scleraBackPts     = get_points(dom, "scleraBack"    ,  0, False, False)
-
-upperLidClosedPts = get_points(dom, "upperLidClosed", 33, False, True )
-upperLidOpenPts   = get_points(dom, "upperLidOpen"  , 33, False, True )
-upperLidEdgePts   = get_points(dom, "upperLidEdge"  , 33, False, False)
-
-lowerLidClosedPts = get_points(dom, "lowerLidClosed", 33, False, False)
-lowerLidOpenPts   = get_points(dom, "lowerLidOpen"  , 33, False, False)
-lowerLidEdgePts   = get_points(dom, "lowerLidEdge"  , 33, False, False)
-
-
-# Set up display and initialize pi3d ---------------------------------------
-if platform.system() == "Darwin":  # macOS
-    DISPLAY = pi3d.Display.create(w=800, h=256, samples=4, use_sdl2=True)
-else:  # Raspberry Pi / Linux
-    DISPLAY = pi3d.Display.create(samples=4)
-
-DISPLAY.set_background(0, 0, 0, 1) # r,g,b,alpha
-
-# eyeRadius is the size, in pixels, at which the whole eye will be rendered onscreen. eyePosition, also pixels, is the
-# offset (left or right) from the center point of the screen to the center of each eye. This geometry is explained more in-depth in fbx2.c.
-eyePosition = DISPLAY.width / 4
-eyeRadius = 128  # Default; use 240 for IPS screens
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--radius", type=int)
 args, _ = parser.parse_known_args()
-if args.radius:
-    eyeRadius = args.radius
 
+init_gpio()
+hw    = init_adc()
+svg   = init_svg("graphics/dragon-eye-edit.svg")
+ctx   = init_display(args.radius)
+scene = init_scene(svg, ctx)
 
-# A 2D camera is used, mostly to allow for pixel-accurate eye placement, but also because perspective isn't really helpful or needed here, and
-# also this allows eyelids to be handled somewhat easily as 2D planes. Line of sight is down Z axis, allowing conventional X/Y cartesion
-# coords for 2D positions.
-cam    = pi3d.Camera(is_3d=False, at=(0,0,0), eye=(0,0,-1000))
-shader = pi3d.Shader("uv_light")
-light  = pi3d.Light(lightpos=(0, -500, -500), lightamb=(0.2, 0.2, 0.2))
-
-# Load texture maps --------------------------------------------------------
-
-irisMap   = pi3d.Texture("graphics/dragon-iris-color.png", mipmap=False, filter=pi3d.constants.GL_LINEAR)
-scleraMap = pi3d.Texture("graphics/dragon-sclera.png", mipmap=False, filter=pi3d.constants.GL_LINEAR, blend=True)
-lidMap    = pi3d.Texture("graphics/lid.png", mipmap=False, filter=pi3d.constants.GL_LINEAR, blend=True)
-
-# U/V map may be useful for debugging texture placement; not normally used
-uvMap     = pi3d.Texture("graphics/uv.png", mipmap=False, filter=pi3d.constants.GL_LINEAR, blend=False, m_repeat=True)
-
-# Initialize static geometry -----------------------------------------------
-
-# Transform point lists to eye dimensions
-points_list = [
-    pupilMinPts, pupilMaxPts, irisPts, scleraFrontPts, scleraBackPts,
-    upperLidClosedPts, upperLidOpenPts, upperLidEdgePts,
-    lowerLidClosedPts, lowerLidOpenPts, lowerLidEdgePts
-]
-for points in points_list:
-    scale_points(points, view_box, eyeRadius)
-
-# Regenerating flexible object geometry (such as eyelids during blinks, or iris during pupil dilation) is CPU intensive, can noticeably slow things
-# down, especially on single-core boards.  To reduce this load somewhat, determine a size change threshold below which regeneration will not occur;
-# roughly equal to 1/4 pixel, since 4x4 area sampling is used.
-
-# Determine change in pupil size to trigger iris geometry regen
-irisRegenThreshold = 0.0
-a, b = points_bounds(pupilMinPts), points_bounds(pupilMaxPts) # Bounds of pupil at min size (in pixels) at max size
-maxDist = max(abs(a[0] - b[0]), abs(a[1] - b[1]), abs(a[2] - b[2]), abs(a[3] - b[3])) # Determine distance of max variance around each edge
-
-# maxDist is motion range in pixels as pupil scales between 0.0 and 1.0.
-# 1.0 / maxDist is one pixel's worth of scale range.  Need 1/4 that...
-if maxDist > 0: irisRegenThreshold = 0.25 / maxDist
-
-
-def lid_regen_threshold(open_pts, closed_pts):
-    """
-    Determine change in eyelid values needed to trigger geometry regen.
-    This is done a little differently than the pupils...instead of bounds, the distance between the middle points of the open
-    and closed eyelid paths is evaluated, then similar 1/4 pixel threshold is determined.
-    """
-    mid_open = open_pts[len(open_pts) // 2]
-    mid_closed = closed_pts[len(closed_pts) // 2]
-    delta_x = mid_closed[0] - mid_open[0]
-    delta_y = mid_closed[1] - mid_open[1]
-    sq_dist = delta_x * delta_x + delta_y * delta_y
-    return 0.25 / math.sqrt(sq_dist) if sq_dist > 0 else 0.0
-
-upperLidRegenThreshold = lid_regen_threshold(upperLidOpenPts, upperLidClosedPts)
-lowerLidRegenThreshold = lid_regen_threshold(lowerLidOpenPts, lowerLidClosedPts)
-
-# Generate initial iris meshes; vertex elements will get replaced on a per-frame basis in the main loop, this just sets up textures, etc.
-rightIris = mesh_init((32, 4), (0, 0.5 / irisMap.iy), True, False)
-rightIris.set_textures([irisMap])
-rightIris.set_shader(shader)
-
-# Left iris map U value is offset by 0.5; effectively a 180 degree rotation, so it's less obvious that the same texture is in use on both.
-leftIris = mesh_init((32, 4), (0.5, 0.5 / irisMap.iy), True, False)
-leftIris.set_textures([irisMap])
-leftIris.set_shader(shader)
-
-irisZ = zangle(irisPts, eyeRadius)[0] * 0.99 # Get iris Z depth, for later
-
-# ----------------------------------------------------------------------------------------------------------------------
-# Eyelid meshes are likewise temporary; texture coordinates are assigned here but geometry is dynamically regenerated in main loop.
-left_lids = EyeLidMesh(lidMap, shader, eyePosition, eyeRadius)
-right_lids = EyeLidMesh(lidMap, shader, -eyePosition, eyeRadius)
-
-# ----------------------------------------------------------------------------------------------------------------------
-# Generate scleras for each eye...start with a 2D shape for lathing...
-angle1 = zangle(scleraFrontPts, eyeRadius)[1] # Sclera front angle
-angle2 = zangle(scleraBackPts , eyeRadius)[1] # " back angle
-aRange = 180 - angle1 - angle2
-pts    = []
-
-# ADD EXTRA INITIAL POINT because of some weird behavior with Pi3D and
-# VideoCore VI with the Lathed shapes we make later. This adds a *tiny*
-# ring of extra polygons that simply disappear on screen. It's not
-# necessary on VC4, but not harmful either, so we just do it rather
-# than try to be all clever.
-ca, sa = pi3d.Utility.from_polar((90 - angle1) + aRange * 0.0001)
-pts.append((ca * eyeRadius, sa * eyeRadius))
-
-for i in range(24):
-    ca, sa = pi3d.Utility.from_polar((90 - angle1) - aRange * i / 23)
-    pts.append((ca * eyeRadius, sa * eyeRadius))
-
-# Scleras are generated independently (object isn't re-used) so each
-# may have a different image map (heterochromia, corneal scar, or the
-# same image map can be offset on one so the repetition isn't obvious).
-leftEye = pi3d.Lathe(path=pts, sides=64)
-leftEye.set_textures([scleraMap])
-# leftEye.set_textures([uvMap])
-leftEye.set_shader(shader)
-re_axis(leftEye, 0)
-
-rightEye = pi3d.Lathe(path=pts, sides=64)
-rightEye.set_textures([scleraMap])
-rightEye.set_shader(shader)
-re_axis(rightEye, 0.5) # Image map offset = 180 degree rotation
-
+debug_overlay = DebugOverlay(ctx) if DEBUG_MOVEMENT else None
 
 # Init global stuff --------------------------------------------------------
 
@@ -197,61 +40,26 @@ if CONTROL_MODE == ControlMode.SCRIPTED:
 frames = 0
 beginningTime = time.time()
 
-rightEye.positionX(-eyePosition)
-rightIris.positionX(-eyePosition)
-leftEye.positionX(eyePosition)
-leftIris.positionX(eyePosition)
+scene.left.sclera.positionX(ctx.eye_position)
+scene.left.iris.positionX(ctx.eye_position)
+scene.right.sclera.positionX(-ctx.eye_position)
+scene.right.iris.positionX(-ctx.eye_position)
 
-# Debug outline: white square border around each eye, drawn in front of all geometry (z=-200)
-_dot_shader = pi3d.Shader("mat_flat")
-
-def _make_eye_outline(x_center):
-    r = eyeRadius
-    verts = [
-        (x_center - r,  r, -200),
-        (x_center + r,  r, -200),
-        (x_center + r, -r, -200),
-        (x_center - r, -r, -200),
-    ]
-    outline = pi3d.Lines(vertices=verts, closed=True, line_width=2)
-    outline.set_shader(_dot_shader)
-    outline.set_material((1, 1, 1))
-    return outline
-
-_left_outline  = _make_eye_outline( eyePosition)
-_right_outline = _make_eye_outline(-eyePosition)
-def _make_dot(color):
-    d = pi3d.Disk(radius=5, sides=20, rx=90, z=1)
-    d.set_shader(_dot_shader)
-    d.set_material(color)
-    return d
-
-_dots = {
-    "left":  {"s": _make_dot((1, 0, 0)), "d": _make_dot((0, 1, 0)), "c": _make_dot((1, 1, 0))},
-    # "right": {"s": _make_dot((0, 1, 0)), "d": _make_dot((1, 0, 0)), "c": _make_dot((1, 1, 0))},
-}
-
-def _project(angle_x, angle_y, eye_x_center):
-    """Map eye rotation angles (degrees) to 2D screen pixel position."""
-    x = eye_x_center - math.sin(math.radians(angle_x)) * eyeRadius
-    y = math.sin(math.radians(angle_y)) * eyeRadius
-    return x, y
-
-prev_pupil_scale          = -1.0 # Force regen on first frame
-left_eye_lids = EyeLidState(upperLidOpenPts, upperLidClosedPts, lowerLidOpenPts, lowerLidClosedPts)
-right_eye_lids = EyeLidState(upperLidOpenPts, upperLidClosedPts, lowerLidOpenPts, lowerLidClosedPts)
+prev_pupil_scale = -1.0 # Force regen on first frame
+left_eye_lids = EyeLidState(svg.upper_lid.open, svg.upper_lid.closed, svg.lower_lid.open, svg.lower_lid.closed)
+right_eye_lids = EyeLidState(svg.upper_lid.open, svg.upper_lid.closed, svg.lower_lid.open, svg.lower_lid.closed)
 timeOfLastBlink, timeToNextBlink = (0.0, 1.0)
-
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Frame -- Generate one frame of imagery
 # ----------------------------------------------------------------------------------------------------------------------
 def frame(pupil_scale):
+
     global frames
     global prev_pupil_scale
     global timeOfLastBlink, timeToNextBlink
 
-    DISPLAY.loop_running()
+    ctx.display.loop_running()
     now = time.time()
 
     frames += 1
@@ -264,8 +72,8 @@ def frame(pupil_scale):
     match CONTROL_MODE:
         case ControlMode.MANUAL:
             if JOYSTICK_X_IN >= 0 and JOYSTICK_Y_IN >= 0:
-                left_eye.current.x = -30.0 + bonnet.channel[JOYSTICK_X_IN].value * 60.0
-                left_eye.current.y = -30.0 + bonnet.channel[JOYSTICK_Y_IN].value * 60.0
+                left_eye.current.x = -30.0 + hw.bonnet.channel[JOYSTICK_X_IN].value * 60.0
+                left_eye.current.y = -30.0 + hw.bonnet.channel[JOYSTICK_Y_IN].value * 60.0
 
         case ControlMode.SCRIPTED:
             sequence_player.update(left_eye, now)
@@ -279,19 +87,19 @@ def frame(pupil_scale):
     """
     # Regenerate iris geometry only if size changed by >= 1/4 pixel
     
-    p is the current pupil scale (0.0–1.0). Every frame it checks if the pupil has changed enough to be worth redrawing (at  
+    p is the current pupil scale (0.0–1.0). Every frame it checks if the pupil has changed enough to be worth redrawing (at
     least 1/4 pixel worth of change). If so, it interpolates between the minimum and maximum pupil point shapes, generates a
     3D mesh connecting the pupil ring to the iris ring, and pushes that mesh to both eyes. prevPupilScale is saved so next
     frame knows where it left off.
     """
-    if abs(pupil_scale - prev_pupil_scale) >= irisRegenThreshold:
+    if abs(pupil_scale - prev_pupil_scale) >= scene.iris_regen_threshold:
         # Interpolate points between min and max pupil sizes
-        interPupil = points_interp(pupilMinPts, pupilMaxPts, pupil_scale)
+        inter_pupil = points_interp(svg.pupil_min, svg.pupil_max, pupil_scale)
         # Generate mesh between interpolated pupil and iris bounds
-        mesh = points_mesh((None, interPupil, irisPts), 4, -irisZ, True)
+        mesh = points_mesh((None, inter_pupil, svg.iris), 4, -scene.iris_z, True)
         # Assign to both eyes
-        leftIris.re_init(pts=mesh)
-        rightIris.re_init(pts=mesh)
+        scene.left.iris.re_init(pts=mesh)
+        scene.right.iris.re_init(pts=mesh)
         prev_pupil_scale = pupil_scale
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -306,7 +114,7 @@ def frame(pupil_scale):
         if left_eye.blink_state == NO_BLINK: left_eye.start_blink(now , duration)
         if right_eye.blink_state == NO_BLINK: right_eye.start_blink(now , duration)
 
-        timeToNextBlink = duration * 3 + random.uniform(0.0, 4.0) # timeToNextBlink = duration * 3 + random.uniform(0.0, 5.0)
+        timeToNextBlink = duration * 3 + random.uniform(0.0, 4.0)
 
     """
     update_blink — advances each eye's blink state machine: closing → held closed (if button held) → opening → done.
@@ -337,77 +145,62 @@ def frame(pupil_scale):
 
 # ----------------------------------------------------------------------------------------------------------------------
     n = left_eye.blink_weight(now)
-    newLeftUpperLidWeight = left_eye.tracking_pos + (n * (1.0 - left_eye.tracking_pos))
-    newLeftLowerLidWeight = (1.0 - left_eye.tracking_pos) + (n * left_eye.tracking_pos)
+    new_left_upper_lid_weight = left_eye.tracking_pos + (n * (1.0 - left_eye.tracking_pos))
+    new_left_lower_lid_weight = (1.0 - left_eye.tracking_pos) + (n * left_eye.tracking_pos)
 
     n = right_eye.blink_weight(now)
     if CRAZY_EYES:
-        newRightUpperLidWeight = right_eye.tracking_pos + (n * (1.0 - right_eye.tracking_pos))
-        newRightLowerLidWeight = (1.0 - right_eye.tracking_pos) + (n * right_eye.tracking_pos)
+        new_right_upper_lid_weight = right_eye.tracking_pos + (n * (1.0 - right_eye.tracking_pos))
+        new_right_lower_lid_weight = (1.0 - right_eye.tracking_pos) + (n * right_eye.tracking_pos)
     else:
-        newRightUpperLidWeight = left_eye.tracking_pos + (n * (1.0 - left_eye.tracking_pos))
-        newRightLowerLidWeight = (1.0 - left_eye.tracking_pos) + (n * left_eye.tracking_pos)
+        new_right_upper_lid_weight = left_eye.tracking_pos + (n * (1.0 - left_eye.tracking_pos))
+        new_right_lower_lid_weight = (1.0 - left_eye.tracking_pos) + (n * left_eye.tracking_pos)
 
-    left_eye_lids.upper.update(left_lids.upper, upperLidOpenPts, upperLidClosedPts, upperLidEdgePts, newLeftUpperLidWeight, upperLidRegenThreshold, False)
-    left_eye_lids.lower.update(left_lids.lower, lowerLidOpenPts, lowerLidClosedPts, lowerLidEdgePts, newLeftLowerLidWeight, lowerLidRegenThreshold, False)
+    left_eye_lids.upper.update(scene.left.lids.upper, svg.upper_lid, new_left_upper_lid_weight, scene.upper_lid_regen_threshold, False)
+    left_eye_lids.lower.update(scene.left.lids.lower, svg.lower_lid, new_left_lower_lid_weight, scene.lower_lid_regen_threshold, False)
 
-    right_eye_lids.upper.update(right_lids.upper, upperLidOpenPts, upperLidClosedPts, upperLidEdgePts, newRightUpperLidWeight, upperLidRegenThreshold, True)
-    right_eye_lids.lower.update(right_lids.lower, lowerLidOpenPts, lowerLidClosedPts, lowerLidEdgePts, newRightLowerLidWeight, lowerLidRegenThreshold, True)
+    right_eye_lids.upper.update(scene.right.lids.upper, svg.upper_lid, new_right_upper_lid_weight, scene.upper_lid_regen_threshold, True)
+    right_eye_lids.lower.update(scene.right.lids.lower, svg.lower_lid, new_right_lower_lid_weight, scene.lower_lid_regen_threshold, True)
 
 # ----------------------------------------------------------------------------------------------------------------------
     # Left eye (on screen right)
-    leftIris.rotateToX(left_eye.current.y)
-    leftIris.rotateToY(left_eye.current.x + CONVERGENCE)
-    leftEye.rotateToX(left_eye.current.y)
-    leftEye.rotateToY(left_eye.current.x + CONVERGENCE)
+    scene.left.iris.rotateToX(left_eye.current.y)
+    scene.left.iris.rotateToY(left_eye.current.x + CONVERGENCE)
+    scene.left.sclera.rotateToX(left_eye.current.y)
+    scene.left.sclera.rotateToY(left_eye.current.x + CONVERGENCE)
 
     # Right eye (on screen left)
     if CRAZY_EYES:
-        rightIris.rotateToX(right_eye.current.y)
-        rightIris.rotateToY(right_eye.current.x - CONVERGENCE)
-        rightEye.rotateToX(right_eye.current.y)
-        rightEye.rotateToY(right_eye.current.x - CONVERGENCE)
+        scene.right.iris.rotateToX(right_eye.current.y)
+        scene.right.iris.rotateToY(right_eye.current.x - CONVERGENCE)
+        scene.right.sclera.rotateToX(right_eye.current.y)
+        scene.right.sclera.rotateToY(right_eye.current.x - CONVERGENCE)
     else:
-        rightIris.rotateToX(left_eye.current.y)
-        rightIris.rotateToY(left_eye.current.x - CONVERGENCE)
-        rightEye.rotateToX(left_eye.current.y)
-        rightEye.rotateToY(left_eye.current.x - CONVERGENCE)
+        scene.right.iris.rotateToX(left_eye.current.y)
+        scene.right.iris.rotateToY(left_eye.current.x - CONVERGENCE)
+        scene.right.sclera.rotateToX(left_eye.current.y)
+        scene.right.sclera.rotateToY(left_eye.current.x - CONVERGENCE)
 
     # Flip Eyes Horizontally
     if ROTATE_EYES:
-        leftIris.rotateToZ(ROTATE_DEGREES)
-        leftEye.rotateToZ(ROTATE_DEGREES)
-        left_lids.rotateToZ(ROTATE_DEGREES)
+        scene.left.iris.rotateToZ(ROTATE_DEGREES)
+        scene.left.sclera.rotateToZ(ROTATE_DEGREES)
+        scene.left.lids.rotateToZ(ROTATE_DEGREES)
 
-        rightIris.rotateToZ(ROTATE_DEGREES)
-        rightEye.rotateToZ(ROTATE_DEGREES)
-        right_lids.rotateToZ(ROTATE_DEGREES)
+        scene.right.iris.rotateToZ(ROTATE_DEGREES)
+        scene.right.sclera.rotateToZ(ROTATE_DEGREES)
+        scene.right.lids.rotateToZ(ROTATE_DEGREES)
 
-    # leftIris.draw()
-    # leftEye.draw()
-    # left_lids.draw()
+    if DEBUG_MOVEMENT:
+        debug_overlay.draw(left_eye, ctx)
+    else:
+        scene.left.iris.draw()
+        scene.left.sclera.draw()
+        scene.left.lids.draw()
 
-    rightIris.draw()
-    rightEye.draw()
-    right_lids.draw()
-
-    _left_outline.draw()
-    # _right_outline.draw()
-
-    # Debug dots — only during saccade, drawn on top by disabling depth test
-    if left_eye.is_moving:
-        # r_eye_state = right_eye if CRAZY_EYES else left_eye
-        pi3d.opengles.glDisable(pi3d.constants.GL_DEPTH_TEST)
-        for eye_state, eye_x, side in (
-            (left_eye,    eyePosition, "left"),
-            # (r_eye_state, -eyePosition, "right"),
-        ):
-            for attr, key in (("start", "s"), ("destination", "d"), ("current", "c")):
-                pt = getattr(eye_state, attr)
-                x, y = _project(pt.x, pt.y, eye_x)
-                _dots[side][key].position(x, y, 1)
-                _dots[side][key].draw()
-        pi3d.opengles.glEnable(pi3d.constants.GL_DEPTH_TEST)
+    scene.right.iris.draw()
+    scene.right.sclera.draw()
+    scene.right.lids.draw()
 
     return True
 
@@ -466,7 +259,7 @@ def main():
         else:  # Pupil scale from sensor
             frame_start = time.monotonic()
 
-            pupil_value = bonnet.channel[PUPIL_IN].value
+            pupil_value = hw.bonnet.channel[PUPIL_IN].value
             # If you need to calibrate PUPIL_MIN and MAX, add a 'print v' here for testing.
 
             pupil_value = max(PUPIL_MIN, min(pupil_value, PUPIL_MAX))
@@ -489,7 +282,7 @@ def main():
         k = mykeys.read()
         if k == 27:
             mykeys.close()
-            DISPLAY.stop()
+            ctx.display.stop()
             exit(0)
 
 if __name__ == "__main__":

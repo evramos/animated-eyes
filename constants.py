@@ -1,5 +1,7 @@
 from enum import Enum, auto
 
+DEBUG_MOVEMENT  = True
+
 # Eye motion configuration
 TARGET_FPS      = 60
 AUTO_BLINK      = True  # Eyes blink autonomously
@@ -29,7 +31,7 @@ CONTROL_MODE = ControlMode.SCRIPTED
 
 # TODO - There will be more expressions later that would be selected by end-user
 # Expression sequence file
-SEQUENCE_FILE = "expression/sample4.json"
+SEQUENCE_FILE = "keyframes/sample4.json"
 
 # Pupil and convergence settings
 PUPIL_SCALE     = 0.5

@@ -16,7 +16,6 @@ class SequencePlayer:
         with open(path) as f:
             raw = json.load(f)
         self.keyframes = [Keyframe(**kf) for kf in raw["data"]]
-        self._n        = len(self.keyframes)
         self.index     = -1
         self._armed    = True   # ready to push next destination
 
@@ -30,14 +29,31 @@ class SequencePlayer:
         # dt=0 on that frame means hold_duration=0.0 advances immediately.
         if not eye_state.is_moving:
             dt = now - eye_state.start_time
-            if self._armed or (self._n > 1 and dt >= eye_state.hold_duration):
+            if self._armed or (len(self.keyframes) > 1 and dt >= eye_state.hold_duration):
                 self._advance(eye_state, now)
                 self._move(eye_state, now)   # begin new movement in same frame
 
 
     # ------------------------------------------------------------------
     def _advance(self, eye_state, now):
-        """Push the next keyframe's destination into eye_state."""
+        """
+        Advances to the next keyframe and sets up the eye state for the subsequent movement.
+
+        This method increments the keyframe index (wrapping around to the start if necessary), retrieves the next
+        keyframe, and configures the eye_state with the new destination, movement duration, hold duration, and start
+        time. It also marks the eye as moving and disarms the sequence player to prevent immediate re-advancement.
+
+        Args:
+            eye_state: The eye state object to configure with the next keyframe's parameters.
+            now (float): The current timestamp to set as the start time for the new movement.
+
+        Returns:
+            None: Modifies eye_state and self in place.
+
+        Notes:
+            - The index wraps around using modulo, allowing seamless looping through keyframes.
+            - Sets self._armed False to ensure hold durations are respected before advancing again.
+        """
         self.index = (self.index + 1) % len(self.keyframes)
         kf = self.keyframes[self.index]
 
@@ -51,7 +67,24 @@ class SequencePlayer:
 
     # ------------------------------------------------------------------
     def _move(self, eye_state, now):
-        """Smooth movement — linear or Bézier depending on keyframe."""
+        """
+        Moves the eye state smoothly towards the destination using linear interpolation or quadratic Bézier curve.
+
+        This method updates the eye_state's current position based on the elapsed time since the movement started.
+        If a control point is defined in the keyframe, it uses quadratic Bézier interpolation for smooth curves;
+        otherwise, it uses linear interpolation. The movement can be eased with smoothstep if hold_duration > 0.
+
+        Args:
+            eye_state: The eye state object containing start, destination, current positions, and timing info.
+            now (float): The current timestamp for calculating elapsed time.
+
+        Returns:
+            None: Modifies eye_state in place.
+
+        Notes:
+            - If movement duration is exceeded, sets is_moving to False and prepares for hold phase.
+            - Updates self._t with the normalized time parameter for use in pupil scaling.
+        """
         if not eye_state.is_moving:
             return
 

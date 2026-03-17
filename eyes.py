@@ -50,6 +50,15 @@ left_eye_lids = EyeLidState(svg.upper_lid.open, svg.upper_lid.closed, svg.lower_
 right_eye_lids = EyeLidState(svg.upper_lid.open, svg.upper_lid.closed, svg.lower_lid.open, svg.lower_lid.closed)
 timeOfLastBlink, timeToNextBlink = (0.0, 1.0)
 
+# Temp lid preview — keyboard-driven lid weights for visual tuning (macOS dev only)
+try:
+    from mock.bonnet import Channel as _Channel, Bonnet as _MockBonnet
+    _lid_upper_ch = _Channel(**_MockBonnet._CHANNEL_KEYS[5])
+    _lid_lower_ch = _Channel(**_MockBonnet._CHANNEL_KEYS[6])
+    _LID_PREVIEW = True
+except ImportError:
+    _LID_PREVIEW = False
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Frame -- Generate one frame of imagery
 # ----------------------------------------------------------------------------------------------------------------------
@@ -155,6 +164,12 @@ def frame(pupil_scale):
     else:
         new_right_upper_lid_weight = left_eye.tracking_pos + (n * (1.0 - left_eye.tracking_pos))
         new_right_lower_lid_weight = (1.0 - left_eye.tracking_pos) + (n * left_eye.tracking_pos)
+
+    # if _LID_PREVIEW:
+    #     new_left_upper_lid_weight  = _lid_upper_ch.value
+    #     new_left_lower_lid_weight  = _lid_lower_ch.value
+    #     new_right_upper_lid_weight = new_left_upper_lid_weight
+    #     new_right_lower_lid_weight = new_left_lower_lid_weight
 
     left_eye_lids.upper.update(scene.left.lids.upper, svg.upper_lid, new_left_upper_lid_weight, scene.upper_lid_regen_threshold, False)
     left_eye_lids.lower.update(scene.left.lids.lower, svg.lower_lid, new_left_lower_lid_weight, scene.lower_lid_regen_threshold, False)

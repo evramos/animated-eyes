@@ -14,8 +14,8 @@ import time
 from threading import Thread
 import board
 import busio
-#import adafruit_ads1x15.ads1015 as ADS
-#from adafruit_ads1x15.analog_in import AnalogIn
+import adafruit_ads1x15.ads1015 as ADS
+from adafruit_ads1x15.analog_in import AnalogIn
 
 class AdcChannel():
     """Corresponds to ONE CHANNEL of the Snake Eye Bonnet's ADS1015
@@ -77,14 +77,14 @@ class SnakeEyesBonnet(Thread):
        four channels of analog input with clipping and filtering, with
        output ranging from 0.0 to 1.0 (rather than specific voltages or
        integer units)."""
-#    channel_dict = {
-#        0: ADS.P0,
-#        1: ADS.P1,
-#        2: ADS.P2,
-#        3: ADS.P3
-#    }
+    channel_dict = {
+       0: ADS.P0,
+       1: ADS.P1,
+       2: ADS.P2,
+       3: ADS.P3
+    }
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, daemon, *args, **kwargs):
         """SnakeEyesBonnet constructor."""
         super(SnakeEyesBonnet, self).__init__(daemon=daemon) # Thread
         self.i2c = busio.I2C(board.SCL, board.SDA)

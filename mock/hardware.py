@@ -2,7 +2,7 @@ from unittest.mock import MagicMock
 import sys
 import types
 import ctypes.util
-from KeyboardGPIO import KeyboardGPIO
+from mock.keyboardGPIO import KeyboardGPIO
 from mock.bonnet import Bonnet
 
 # Redirect pi3d's GLES library lookup to macOS native OpenGL so that

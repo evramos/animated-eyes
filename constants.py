@@ -1,6 +1,6 @@
 from enum import Enum, auto
 
-DEBUG_MOVEMENT  = True
+DEBUG_MOVEMENT  = False
 
 # Eye motion configuration
 TARGET_FPS      = 60

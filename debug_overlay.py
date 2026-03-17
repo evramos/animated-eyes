@@ -1,8 +1,10 @@
 # debug_overlay.py
+import cmath
 import math
 
 import pi3d
 
+from constants import ROTATE_DEGREES, ROTATE_EYES
 from models import DisplayContext
 
 class DebugOverlay:
@@ -11,6 +13,7 @@ class DebugOverlay:
         # builds _dot_shader, _left_outline, _dots
         self._eye_radius = ctx.eye_radius
         self._eye_position = ctx.eye_position
+        self._rotation = cmath.rect(1, math.radians(ROTATE_DEGREES)) if ROTATE_EYES else None
 
         # Debug outline: white square border around each eye, drawn in front of all geometry (z=-200)
         self._dot_shader = pi3d.Shader("mat_flat")
@@ -23,16 +26,14 @@ class DebugOverlay:
     def _make_eye_outline(self, x_center, width=2.0, color=(1, 1, 1), alpha=0.35, r=None):
         if r is None:
             r = self._eye_radius
-        vertices = [
-            (x_center - r, r, -200),
-            (x_center + r, r, -200),
-            (x_center + r, -r, -200),
-            (x_center - r, -r, -200),
-        ]
+        vertices = [(-r, r, 0), (r, r, 0), (r, -r, 0), (-r, -r, 0)]
         outline = pi3d.Lines(vertices=vertices, closed=True, line_width=width)
         outline.set_shader(self._dot_shader)
         outline.set_material(color)
         outline.set_alpha(alpha)
+        outline.position(x_center, 0, -200)
+        if ROTATE_EYES:
+            outline.rotateToZ(ROTATE_DEGREES)
         return outline
 
     def _make_dot(self, color):
@@ -43,9 +44,10 @@ class DebugOverlay:
 
     def _project(self, angle_x, angle_y, eye_x_center):
         """Map eye rotation angles (degrees) to 2D screen pixel position."""
-        x = eye_x_center - math.sin(math.radians(angle_x)) * self._eye_radius
-        y = math.sin(math.radians(angle_y)) * self._eye_radius
-        return x, y
+        offset = complex(-math.sin(math.radians(angle_x)), math.sin(math.radians(angle_y))) * self._eye_radius
+        if self._rotation:
+            offset *= self._rotation
+        return eye_x_center + offset.real, offset.imag
 
     def draw(self, eye, ctx):
         self._left_outline.draw()
@@ -56,5 +58,7 @@ class DebugOverlay:
                 pt = getattr(eye, attr)
                 x, y = self._project(pt.x, pt.y, ctx.eye_position)
                 self._dots[key].position(x, y, 1)
+                if ROTATE_EYES:
+                    self._dots[key].rotateToZ(ROTATE_DEGREES)
                 self._dots[key].draw()
             pi3d.opengles.glEnable(pi3d.constants.GL_DEPTH_TEST)

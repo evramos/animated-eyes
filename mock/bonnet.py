@@ -36,9 +36,13 @@ class Channel:
 class Bonnet(threading.Thread):
     # https: // wiki.libsdl.org / SDL3 / SDL_Scancode
     _CHANNEL_KEYS = {
-        0: dict(key_inc='SDL_SCANCODE_LEFTBRACKET', key_dec='SDL_SCANCODE_RIGHTBRACKET', initial=0.5, speed=0.4, spring=False),  # pupil
-        1: dict(key_inc='SDL_SCANCODE_LEFT', key_dec='SDL_SCANCODE_RIGHT', initial=0.5, speed=2.0, spring=True),   # joystick X
-        2: dict(key_inc='SDL_SCANCODE_UP', key_dec='SDL_SCANCODE_DOWN', initial=0.5, speed=2.0, spring=True),   # joystick Y
+        0: dict(key_inc='SDL_SCANCODE_LEFTBRACKET', key_dec='SDL_SCANCODE_RIGHTBRACKET', initial=0.5, speed=1.0, spring=False),  # pupil
+        1: dict(key_inc='SDL_SCANCODE_LEFT',        key_dec='SDL_SCANCODE_RIGHT',        initial=0.5, speed=2.0, spring=True),   # joystick X
+        2: dict(key_inc='SDL_SCANCODE_UP',          key_dec='SDL_SCANCODE_DOWN',         initial=0.5, speed=2.0, spring=True),   # joystick Y
+        3: dict(key_inc='SDL_SCANCODE_T',           key_dec='SDL_SCANCODE_R',            initial=0.5, speed=1.0, spring=False),  # right upper lid
+        4: dict(key_inc='SDL_SCANCODE_V',           key_dec='SDL_SCANCODE_C',            initial=0.5, speed=1.0, spring=False),  # right lower lid
+        5: dict(key_inc='SDL_SCANCODE_I',           key_dec='SDL_SCANCODE_U',            initial=0.5, speed=1.0, spring=False),  # left upper lid
+        6: dict(key_inc='SDL_SCANCODE_M',           key_dec='SDL_SCANCODE_N',            initial=0.5, speed=1.0, spring=False),  # left lower lid
     }
 
     def __init__(self, daemon=True):

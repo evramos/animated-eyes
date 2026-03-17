@@ -4,8 +4,8 @@ class KeyboardGPIO:
     Pressing a key simulates holding the corresponding button LOW.
     Key mapping (edit _PIN_KEYS to rebind):
         Space  ->  BLINK_PIN  (pin 23)
-        L      ->  WINK_L_PIN (pin 22)
-        R      ->  WINK_R_PIN (pin 24)
+        J      ->  WINK_L_PIN (pin 22)
+        F      ->  WINK_R_PIN (pin 24)
     """
     BCM    = 11
     IN     = 1
@@ -14,9 +14,9 @@ class KeyboardGPIO:
     PUD_UP = 22
 
     _PIN_KEYS = {
-        22: 'SDL_SCANCODE_L',      # WINK_L_PIN
+        22: 'SDL_SCANCODE_J',      # WINK_L_PIN
         23: 'SDL_SCANCODE_SPACE',  # BLINK_PIN
-        24: 'SDL_SCANCODE_R',      # WINK_R_PIN
+        24: 'SDL_SCANCODE_F',      # WINK_R_PIN
     }
 
     def setmode(self, mode): pass

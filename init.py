@@ -1,12 +1,15 @@
+import math
 import platform
 
 import RPi.GPIO as GPIO
 from xml.dom.minidom import parse
 
-from gfxutil import *
+import pi3d
+
+from gfxutil import get_view_box, get_points, re_axis, zangle, scale_points, points_bounds, mesh_init
 from eye import EyeLidMesh
 from snake_eyes_bonnet import SnakeEyesBonnet
-from constants import *
+from constants import WINK_L_PIN, BLINK_PIN, WINK_R_PIN, JOYSTICK_X_IN, JOYSTICK_Y_IN, PUPIL_IN
 from models import LidPoints, EyeMeshes, SvgPoints, SceneContext, HardwareContext, DisplayContext
 
 def init_gpio():
@@ -132,7 +135,6 @@ def _lid_regen_threshold(open_pts, closed_pts):
 def init_scene(svg: SvgPoints, ctx: DisplayContext) -> SceneContext:
 
     # Load texture maps --------------------------------------------------------
-
     iris_map = pi3d.Texture("graphics/dragon-iris-color.png", mipmap=False, filter=pi3d.constants.GL_LINEAR)
     sclera_map = pi3d.Texture("graphics/dragon-sclera.png", mipmap=False, filter=pi3d.constants.GL_LINEAR, blend=True)
     lid_map = pi3d.Texture("graphics/lid.png", mipmap=False, filter=pi3d.constants.GL_LINEAR, blend=True)

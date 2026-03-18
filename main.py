@@ -8,7 +8,6 @@
 import argparse
 import random
 import time
-import json
 import pi3d
 
 from debug_overlay  import DebugOverlay
@@ -33,18 +32,11 @@ ctx   = init_display(args.radius)
 scene = init_scene(svg, ctx)
 
 debug_overlay = DebugOverlay(ctx) if DEBUG_MOVEMENT else None
-
-mykeys    = pi3d.Keyboard()
-eyes = Eyes(svg)
-
 sequence_player = SequencePlayer(SEQUENCE_FILE) if CONTROL_MODE == ControlMode.SCRIPTED else None
 
+mykeys = pi3d.Keyboard()
+eyes = Eyes(svg)
 state = FrameState()
-
-scene.left.sclera.positionX(ctx.eye_position)
-scene.left.iris.positionX(ctx.eye_position)
-scene.right.sclera.positionX(-ctx.eye_position)
-scene.right.iris.positionX(-ctx.eye_position)
 
 # Lid preview — keyboard-driven channels for visual tuning (macOS dev only)
 try:
@@ -63,24 +55,36 @@ def frame(pupil_scale):
 
     ctx.display.loop_running()
     now = time.monotonic()
+    left, right = eyes.left, eyes.right
 
     state.frames += 1
     if state.frames % TARGET_FPS == 0:
-        if now > state.beginning_time:
-            print("FPS: {:.2f}".format(state.frames / (now - state.beginning_time)))
-        print(json.dumps({"eye": eyes.left.to_dict()}))
+        elapsed = now - state.beginning_time
+        if elapsed > 0:
+            print("FPS: {:.2f}".format(TARGET_FPS / elapsed))
+        state.beginning_time = now
 
     update_eye_positions(now, eyes, hw, sequence_player)
     update_iris(pupil_scale, state, scene, svg)
     update_blinks(now, eyes, state)
     update_lid_tracking(eyes, lid_channels, state)
-    update_lids(now, eyes.left,  scene.left,  svg, scene, False)
-    update_lids(now, eyes.right, scene.right, svg, scene, True)
+    update_lids(now, left,  scene.left,  svg, scene, False)
+    update_lids(now, right, scene.right, svg, scene, True)
     draw_scene(eyes, scene, ctx, debug_overlay)
 
     return True
 
 # ── Split Pupil ────────────────────────────────────────────────────────────────
+
+def _frame_sleep(frame_start):
+    """Hybrid sleep: yield CPU for most of the frame budget, busy-wait the last 1ms."""
+    deadline  = frame_start + (1.0 / TARGET_FPS)
+    remaining = deadline - time.monotonic()
+    if remaining > 0.001:
+        time.sleep(remaining - 0.001)
+    while time.monotonic() < deadline:
+        pass
+
 
 def split_pupil(start_value, end_value, duration, variance):
     """Recursive simulated pupil response when no analog sensor is present.
@@ -108,13 +112,11 @@ def split_pupil(start_value, end_value, duration, variance):
             frame_start = time.monotonic()
             dt = time.time() - start_time
             if dt >= duration: break
+
             pupil_scale_value = start_value + dv * dt / duration
             pupil_scale_value = max(PUPIL_MIN, min(pupil_scale_value, PUPIL_MAX))
             frame(pupil_scale_value)
-            elapsed    = time.monotonic() - frame_start
-            sleep_time = (1.0 / TARGET_FPS) - elapsed
-            if sleep_time > 0:
-                time.sleep(sleep_time)
+            _frame_sleep(frame_start)
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 
@@ -137,13 +139,7 @@ def main():
                 pupil_value = ((current_pupil_scale * (PUPIL_SMOOTH - 1) + pupil_value) / PUPIL_SMOOTH)
 
             frame(pupil_value)
-
-            elapsed    = time.monotonic() - frame_start
-            sleep_time = (1.0 / TARGET_FPS) - elapsed
-            if sleep_time > 0:
-                time.sleep(sleep_time)
-            elif sleep_time < 0:
-                print(f"Frame overrun: {-sleep_time * 1000:.1f}ms late")
+            _frame_sleep(frame_start)
 
         current_pupil_scale = pupil_value
 

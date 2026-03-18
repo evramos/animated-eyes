@@ -173,11 +173,13 @@ def init_scene(svg: SvgPoints, ctx: DisplayContext) -> SceneContext:
     right_iris = mesh_init((32, 4), (0, 0.5 / iris_map.iy), True, False)
     right_iris.set_textures([iris_map])
     right_iris.set_shader(ctx.shader)
+    right_iris.positionX(-ctx.eye_position)
 
     # Left iris map U value is offset by 0.5; effectively a 180 degree rotation, so it's less obvious that the same texture is in use on both.
     left_iris = mesh_init((32, 4), (0.5, 0.5 / iris_map.iy), True, False)
     left_iris.set_textures([iris_map])
     left_iris.set_shader(ctx.shader)
+    left_iris.positionX(ctx.eye_position)
 
     iris_z_angle = zangle(svg.iris, ctx.eye_radius)[0] * 0.99  # Get iris Z depth, for later
 
@@ -205,13 +207,13 @@ def init_scene(svg: SvgPoints, ctx: DisplayContext) -> SceneContext:
 
     # Scleras are generated independently (object isn't re-used) so each may have a different image map (heterochromia,
     # corneal scar, or the same image map can be offset on one so the repetition isn't obvious).
-    left_sclera = pi3d.Lathe(path=pts, sides=64)
+    left_sclera = pi3d.Lathe(path=pts, sides=64, x=ctx.eye_position)
     left_sclera.set_textures([sclera_map])
     # left_sclera.set_textures([uv_map]) # debug option
     left_sclera.set_shader(ctx.shader)
     re_axis(left_sclera, 0)
 
-    right_sclera = pi3d.Lathe(path=pts, sides=64)
+    right_sclera = pi3d.Lathe(path=pts, sides=64, x=-ctx.eye_position)
     right_sclera.set_textures([sclera_map])
     right_sclera.set_shader(ctx.shader)
     re_axis(right_sclera, 0.5)  # Image map offset = 180 degree rotation

@@ -10,8 +10,8 @@ Import order matters:
 """
 
 from  mock import hardware  # noqa: F401 — side effect import, must be before eyes
-import eyes            # noqa: E402 — intentional late import
+import main            # noqa: E402 — intentional late import
 
 if __name__ == "__main__":
-    eyes.main()
+    main.main()
 

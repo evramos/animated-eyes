@@ -7,6 +7,9 @@ import pi3d
 from constants import ROTATE_DEGREES, ROTATE_EYES
 from models import DisplayContext
 
+_sin_deg = lambda a: math.sin(math.radians(a))
+
+
 class DebugOverlay:
 
     def __init__(self, ctx: DisplayContext):
@@ -44,7 +47,7 @@ class DebugOverlay:
 
     def _project(self, angle_x, angle_y, eye_x_center):
         """Map eye rotation angles (degrees) to 2D screen pixel position."""
-        offset = complex(-math.sin(math.radians(angle_x)), math.sin(math.radians(angle_y))) * self._eye_radius
+        offset = complex(-_sin_deg(angle_x), _sin_deg(angle_y)) * self._eye_radius
         if self._rotation:
             offset *= self._rotation
         return eye_x_center + offset.real, offset.imag

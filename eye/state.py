@@ -30,7 +30,8 @@ class EyeState:
         self.blink_start_time = 0.0
         self.blink_duration = 0.1
 
-        self.tracking_pos = 0.3
+        self.upper_tracking_pos = 0.3
+        self.lower_tracking_pos = 0.7
 
     def start_blink(self, now, duration):
         self.blink_state = EN_BLINKING
@@ -104,6 +105,39 @@ class EyeState:
             n = 0.0
         return n
 
+    def update_tracking(self, upper_bias, lower_bias):
+        """Advance the eyelid tracking positions toward the eye's current vertical angle.
+
+        Computes a target weight for each lid based on the eye's vertical position and
+        a bias value that sets the resting position at center gaze. The result is smoothed
+        using an exponential moving average (75% old, 25% new) so the lids lazily follow
+        the eye rather than snapping instantly.
+
+        Upper lid target:  upper_bias - (current.y / 60.0)
+            Eye looks down → target decreases (lid lifts)
+            Eye looks up   → target increases (lid droops)
+
+        Lower lid target:  lower_bias + (current.y / 60.0)
+            Eye looks down → target increases (lid rises to meet eye)
+            Eye looks up   → target decreases (lid falls away)
+
+        Both targets are clamped to [0.0, 1.0] before smoothing.
+
+        Args:
+            upper_bias (float): Resting weight for the upper lid at center gaze (0.0–1.0).
+                                Default 0.4 — slight droop at neutral.
+            lower_bias (float): Resting weight for the lower lid at center gaze (0.0–1.0).
+                                Default 0.6 — complement of upper_bias.
+
+        Updates:
+            self.upper_tracking_pos: Smoothed weight fed into the upper lid blink blend.
+            self.lower_tracking_pos: Smoothed weight fed into the lower lid blink blend.
+        """
+        u = max(0.0, min(upper_bias - self.current.y / 60.0, 1.0))
+        l = max(0.0, min(lower_bias + self.current.y / 60.0, 1.0))
+        self.upper_tracking_pos = (self.upper_tracking_pos * 3.0 + u) * 0.25
+        self.lower_tracking_pos = (self.lower_tracking_pos * 3.0 + l) * 0.25
+
     def to_dict(self):
         s, d, c = self.start, self.destination, self.current
         pos = {"pos": [round(c.x, 2), round(c.y, 2)]} if s == d == c else\
@@ -116,5 +150,6 @@ class EyeState:
             **pos,
             **({"is_moving": True} if self.is_moving else {}),
             **({"blink_state": self.blink_state} if self.blink_state else {}),
-            "tracking": round(self.tracking_pos, 3),
+            "upper_tracking": round(self.upper_tracking_pos, 3),
+            "lower_tracking": round(self.lower_tracking_pos, 3),
         }

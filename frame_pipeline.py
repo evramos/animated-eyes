@@ -16,6 +16,7 @@ Stage order:
 import random
 import time
 from dataclasses import dataclass, field
+from typing import Protocol
 
 import RPi.GPIO as GPIO
 
@@ -30,29 +31,38 @@ _adc_to_angle = lambda ch: -30.0 + ch.value * 60.0
 @dataclass
 class FrameState:
     """Mutable per-frame counters and timers, replacing loose globals in eyes.py."""
-    frames:             int   = 0
-    beginning_time:     float = field(default_factory=time.monotonic)
-    prev_pupil_scale:   float = -1.0   # forces iris regen on first frame
-    time_of_last_blink: float = 0.0
-    time_to_next_blink: float = 1.0
+    frames:             int         = 0
+    beginning_time:     float       = field(default_factory=time.monotonic)
+    prev_pupil_scale:   float       = -1.0   # forces iris regen on first frame
+    time_of_last_blink: float       = 0.0
+    time_to_next_blink: float       = 1.0
+    step_key_held:      bool        = False  # edge detection for KEYFRAME_STEP space press
+    control_mode:       ControlMode = CONTROL_MODE
+    wink_left:          bool        = False
+    wink_right:         bool        = False
 
 
 # ── Lid preview channels ───────────────────────────────────────────────────────
+
+class _HasValue(Protocol):
+    @property
+    def value(self) -> float: ...
+
 
 @dataclass
 class LidChannels:
     """Holds the four keyboard-driven ADC channels used during lid preview (macOS dev only).
     Pass None on hardware where mock.bonnet is unavailable.
     """
-    left_upper:  object
-    left_lower:  object
-    right_upper: object
-    right_lower: object
+    left_upper:  _HasValue
+    left_lower:  _HasValue
+    right_upper: _HasValue
+    right_lower: _HasValue
 
 
 # ── Pipeline stages ────────────────────────────────────────────────────────────
 
-def update_eye_positions(now, eyes, hw, sequence_player=None):
+def update_eye_positions(now, eyes, hw, state, sequence_player=None):
     """Advance left (and optionally right) eye position for this frame.
 
     The active CONTROL_MODE determines the source:
@@ -66,7 +76,7 @@ def update_eye_positions(now, eyes, hw, sequence_player=None):
         hw              (HardwareContext): Bonnet ADC accessor.
         sequence_player (SequencePlayer): Required when CONTROL_MODE is SCRIPTED.
     """
-    match CONTROL_MODE:
+    match state.control_mode:
         case ControlMode.MANUAL:
             if JOYSTICK_X_IN >= 0 and JOYSTICK_Y_IN >= 0:
                 eyes.left.current.x = _adc_to_angle(hw.bonnet.channel[JOYSTICK_X_IN])
@@ -74,6 +84,11 @@ def update_eye_positions(now, eyes, hw, sequence_player=None):
 
         case ControlMode.SCRIPTED:
             if sequence_player:
+                if KEYFRAME_STEP:
+                    pressed = GPIO.input(BLINK_PIN) == GPIO.LOW
+                    if pressed and not state.step_key_held:
+                        sequence_player.step()
+                    state.step_key_held = pressed
                 sequence_player.update(eyes.left, now)
 
         case ControlMode.RANDOM:
@@ -104,50 +119,70 @@ def update_iris(pupil_scale, state, scene, svg):
         state.prev_pupil_scale = pupil_scale
 
 
-def update_blinks(now, eyes, state):
+def update_blinks(now, eyes, state, sequence_player=None):
     """Advance blink state machines and fire the auto-blink timer.
 
     Handles three blink sources:
-        - Auto-blink timer (AUTO_BLINK constant)
+        - Auto-blink timer (AUTO_BLINK constant), or per-keyframe override
         - BLINK_PIN GPIO (blinks both eyes while held)
         - Per-eye wink pins (WINK_L_PIN / WINK_R_PIN)
 
     Args:
-        now       (float):       Current timestamp in seconds.
-        eyes      (Eyes):        Left & Right eye instance.
-        state     (FrameState):  Holds blink timer state; updated on auto-blink.
+        now             (float):               Current timestamp in seconds.
+        eyes            (Eyes):                Left & Right eye instance.
+        state           (FrameState):          Holds blink timer state; updated on auto-blink.
+        sequence_player (SequencePlayer|None): When provided, reads auto_blink from the
+                                               active keyframe instead of the constant.
     """
-    if AUTO_BLINK and (now - state.time_of_last_blink) >= state.time_to_next_blink:
+    auto_blink = sequence_player.auto_blink if sequence_player else AUTO_BLINK
+
+    if auto_blink and (now - state.time_of_last_blink) >= state.time_to_next_blink:
         state.time_of_last_blink = now
         duration = random.uniform(0.035, 0.06)
         if eyes.left.blink_state  == NO_BLINK: eyes.left.start_blink(now, duration)
         if eyes.right.blink_state == NO_BLINK: eyes.right.start_blink(now, duration)
         state.time_to_next_blink = duration * 3 + random.uniform(0.0, 4.0)
 
-    eyes.left.update_blink(WINK_L_PIN, now)
-    eyes.right.update_blink(WINK_R_PIN, now)
+    eyes.left.update_blink(WINK_L_PIN,  now, wink_held=state.wink_left)
+    eyes.right.update_blink(WINK_R_PIN, now, wink_held=state.wink_right)
 
-    if BLINK_PIN >= 0 and GPIO.input(BLINK_PIN) == GPIO.LOW:
+    if BLINK_PIN >= 0 and not KEYFRAME_STEP and GPIO.input(BLINK_PIN) == GPIO.LOW:
         duration = random.uniform(0.035, 0.06)
         if eyes.left.blink_state  == NO_BLINK: eyes.left.start_blink(now, duration)
         if eyes.right.blink_state == NO_BLINK: eyes.right.start_blink(now, duration)
 
 
-def update_lid_tracking(eyes, lid_channels, state):
+def update_lid_tracking(eyes, lid_channels, state, sequence_player=None):
     """Resolve lid tracking positions for both eyes.
 
-    Computes upper/lower bias values (from lid_channels when in preview mode,
-    or fixed defaults otherwise), calls update_tracking() on each eye, then
-    copies left eye tracking to right eye if MIRROR_LIDS is True.
+    Priority (highest → lowest):
+        1. eyelid_tracking=True  — dynamic tracking from eye position
+        2. lid_weight authored   — interpolated scripted weights
+        3. lid_channels preview  — macOS dev keyboard channels
+        4. Fixed defaults        — 0.4 upper / 0.6 lower
+
+    eyelid_tracking overrides lid_weight when both are set on a keyframe.
 
     Args:
-        eyes      (Eyes):             Left & Right eye instance.
-        lid_channels (LidChannels|None): Preview channels, or None on hardware.
-        state       (FrameState):    Used for the per-second debug print.
+        eyes            (Eyes):                Left & Right eye instance.
+        lid_channels    (LidChannels|None):    Preview channels, or None on hardware.
+        state           (FrameState):          Used for the per-second debug print.
+        sequence_player (SequencePlayer|None): When provided, reads lid_weight and
+                                               eyelid_tracking from the active keyframe.
     """
     right_independent = CRAZY_EYES or not MIRROR_LIDS
 
-    if TRACKING:
+    lid_weight = sequence_player.current_lid_weight if sequence_player else None
+    do_tracking = sequence_player.eyelid_tracking if sequence_player else EYELID_TRACKING
+
+    if sequence_player and state.frames % TARGET_FPS == 0:
+        lw = lid_weight
+        lw_str = (f"L({lw['left'][0]:.2f},{lw['left'][1]:.2f}) R({lw['right'][0]:.2f},{lw['right'][1]:.2f})"
+                  if lw else "none")
+        # print(f"[seq] kf={sequence_player.index}  auto_blink={sequence_player.auto_blink}  "
+        #       f"tracking={do_tracking}  lid_weight={lw_str}")
+
+    if do_tracking:
         if lid_channels:
             left_upper_bias  = lid_channels.left_upper.value
             left_lower_bias  = lid_channels.left_lower.value
@@ -161,9 +196,18 @@ def update_lid_tracking(eyes, lid_channels, state):
         if right_independent:
             eyes.right.update_tracking(right_upper_bias, right_lower_bias)
 
-        if lid_channels and state.frames % TARGET_FPS == 0:
-            print(f"L upper: {left_upper_bias:.2f}, L lower: {left_lower_bias:.2f} | "
-                  f"R upper: {right_upper_bias:.2f}, R lower: {right_lower_bias:.2f}")
+        # if lid_channels and state.frames % TARGET_FPS == 0:
+        #     print(f"L upper: {left_upper_bias:.2f}, L lower: {left_lower_bias:.2f} | "
+        #           f"R upper: {right_upper_bias:.2f}, R lower: {right_lower_bias:.2f}")
+    elif lid_weight is not None:
+        # Scripted weights — assign directly, no smoothing
+        lu, ll = lid_weight["left"]
+        ru, rl = lid_weight["right"]
+        eyes.left.upper_tracking_pos = lu
+        eyes.left.lower_tracking_pos = ll
+        if right_independent:
+            eyes.right.upper_tracking_pos = ru
+            eyes.right.lower_tracking_pos = rl
     else:
         if lid_channels:
             eyes.left.upper_tracking_pos  = lid_channels.left_upper.value

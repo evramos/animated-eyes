@@ -1,0 +1,24 @@
+{
+  "data": [
+    {"destination":[-22,9],"move_duration":1,"hold_duration":1},
+    {"destination":[20,10],"move_duration":0.1,"hold_duration":0.1},
+    {"destination":[-21,3],"move_duration":0.1,"hold_duration":0.1},
+    {"destination":[21,3],"move_duration":0.1,"hold_duration":0.1},
+    {"destination":[-21,-2],"move_duration":0.1,"hold_duration":0.1},
+    {"destination":[22,-5],"move_duration":0.1,"hold_duration":0.1},
+    {"destination":[-22,-11],"move_duration":0.1,"hold_duration":0.1},
+    {"destination":[24,-16],"move_duration":0.1,"hold_duration":0.1},
+    {"destination":[-28,-19],"move_duration":0.1,"hold_duration":0.1},
+    {"destination":[26,-27],"move_duration":0.1,"hold_duration":0.1},
+    {"destination":[-24,26],"move_duration":0.1,"hold_duration":0.1},
+    {"destination":[-21,-27],"move_duration":0.1,"hold_duration":0.1},
+    {"destination":[-13,24],"move_duration":0.1,"hold_duration":0.1},
+    {"destination":[-9,-27],"move_duration":0.1,"hold_duration":0.1},
+    {"destination":[-4,23],"move_duration":0.1,"hold_duration":0.1},
+    {"destination":[-1,-27],"move_duration":0.1,"hold_duration":0.1},
+    {"destination":[5,25],"move_duration":0.1,"hold_duration":0.1},
+    {"destination":[8,-27],"move_duration":0.1,"hold_duration":0.1},
+    {"destination":[13,25],"move_duration":0.1,"hold_duration":0.1},
+    {"destination":[19,-28],"move_duration":0.1,"hold_duration":0.1}
+  ]
+}

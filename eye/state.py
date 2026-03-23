@@ -64,23 +64,26 @@ class EyeState:
                 self.is_moving = True
 
 
-    def update_blink(self, wink_pin, now):
+    def update_blink(self, wink_pin, now, wink_held=False):
         """Advance the blink state machine for this eye.
 
         Args:
-            wink_pin (int): GPIO pin for this eye's wink button (-1 if unused).
-            now      (float): Current timestamp in seconds.
+            wink_pin  (int):   GPIO pin for this eye's wink button (-1 if unused).
+            now       (float): Current timestamp in seconds.
+            wink_held (bool):  True while a gamepad wink button is held (supplements wink_pin).
 
         Notes:
-            - If the eye is mid-blink and the hold condition is met (BLINK_PIN or wink_pin held LOW), the state is frozen until the button is released.
+            - If the eye is mid-blink and the hold condition is met (BLINK_PIN or wink_pin held LOW, or wink_held), the state is frozen until released.
             - On state advance, duration doubles to give the opening phase the same length as the closing phase.
-            - If idle (state 0) and wink_pin is held LOW, a new blink is triggered.
+            - If idle (state 0) and wink_pin is held LOW or wink_held is True, a new blink is triggered.
         """
+        held = (wink_held or
+                (BLINK_PIN >= 0 and GPIO.input(BLINK_PIN) == GPIO.LOW) or
+                (wink_pin >= 0 and GPIO.input(wink_pin) == GPIO.LOW))
+
         if self.blink_state:
             if (now - self.blink_start_time) >= self.blink_duration:
-                if (self.blink_state == EN_BLINKING and
-                        ((BLINK_PIN >= 0 and GPIO.input(BLINK_PIN) == GPIO.LOW) or
-                         (wink_pin >= 0 and GPIO.input(wink_pin) == GPIO.LOW))):
+                if self.blink_state == EN_BLINKING and held:
                     pass  # eye held closed, don't advance
                 else:
                     self.blink_state += 1
@@ -90,7 +93,7 @@ class EyeState:
                         self.blink_duration *= 2.0
                         self.blink_start_time = now
         else:
-            if wink_pin >= 0 and GPIO.input(wink_pin) == GPIO.LOW:
+            if wink_held or (wink_pin >= 0 and GPIO.input(wink_pin) == GPIO.LOW):
                 self.blink_state = EN_BLINKING
                 self.blink_start_time = now
                 self.blink_duration = random.uniform(0.035, 0.06)

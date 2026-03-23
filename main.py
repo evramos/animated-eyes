@@ -5,19 +5,34 @@
 # Frame pipeline stages live in frame_pipeline.py.
 # Constants are in constants.py. Hardware is mocked for macOS dev via mock/hardware.py.
 
+import platform
+import threading
 import argparse
 import random
 import time
+
 import pi3d
 
-from debug_overlay  import DebugOverlay
-from init           import init_gpio, init_adc, init_svg, init_display, init_scene
-from eye            import Eyes, SequencePlayer
-from frame_pipeline import (FrameState, LidChannels,
-                             update_eye_positions, update_iris,
-                             update_blinks, update_lid_tracking,
-                             update_lids, draw_scene)
+if platform.system() == "Darwin":
+    try:
+        import Foundation as _Foundation
+        _ns_date = _Foundation.NSDate.dateWithTimeIntervalSinceNow_
+        _main_rl = _Foundation.NSRunLoop.mainRunLoop()
+        def _pump_runloop():
+            _main_rl.runUntilDate_(_ns_date(0))
+    except ImportError:
+        def _pump_runloop(): pass
+else:
+    def _pump_runloop(): pass
+
 from constants import *
+from debug_overlay import DebugOverlay
+from bluetooth import GamepadListener
+from eye import Eyes, SequencePlayer
+from frame_pipeline import (FrameState, LidChannels,
+                            draw_scene, update_eye_positions, update_iris,
+                            update_blinks, update_lid_tracking, update_lids, )
+from init import init_gpio, init_adc, init_svg, init_display, init_scene
 
 # ── Init ───────────────────────────────────────────────────────────────────────
 
@@ -31,12 +46,28 @@ svg   = init_svg("graphics/dragon-eye-edit.svg")
 ctx   = init_display(args.radius)
 scene = init_scene(svg, ctx)
 
-debug_overlay = DebugOverlay(ctx) if DEBUG_MOVEMENT else None
-sequence_player = SequencePlayer(SEQUENCE_FILE) if CONTROL_MODE == ControlMode.SCRIPTED else None
+debug_overlay   = DebugOverlay(ctx) if DEBUG_MOVEMENT else None
+sequence_player = SequencePlayer(SEQUENCE_FILE)
 
 mykeys = pi3d.Keyboard()
-eyes = Eyes(svg)
-state = FrameState()
+eyes   = Eyes(svg)
+state  = FrameState()
+
+def _switch_mode(mode):
+    state.control_mode = mode
+    print(f"[mode] → {mode.name}", flush=True)
+
+quit_event = threading.Event()
+if GAMEPAD_ENABLED:
+    _listener = GamepadListener(quit_event)
+    _listener.add_combo({"buttonB", "dpad_left"},  lambda: _switch_mode(ControlMode.RANDOM))
+    _listener.add_combo({"buttonB", "dpad_up"},    lambda: _switch_mode(ControlMode.MANUAL))
+    _listener.add_combo({"buttonB", "dpad_right"}, lambda: _switch_mode(ControlMode.SCRIPTED))
+    _listener.add_on_press  ("leftShoulder",  lambda: setattr(state, "wink_left",  True))
+    _listener.add_on_release("leftShoulder",  lambda: setattr(state, "wink_left",  False))
+    _listener.add_on_press  ("rightShoulder", lambda: setattr(state, "wink_right", True))
+    _listener.add_on_release("rightShoulder", lambda: setattr(state, "wink_right", False))
+    _listener.start()
 
 # Lid preview — keyboard-driven channels for visual tuning (macOS dev only)
 try:
@@ -53,6 +84,9 @@ except ImportError:
 # ── Frame ──────────────────────────────────────────────────────────────────────
 def frame(pupil_scale):
 
+    if quit_event.is_set():
+        return False
+
     ctx.display.loop_running()
     now = time.monotonic()
     left, right = eyes.left, eyes.right
@@ -60,14 +94,15 @@ def frame(pupil_scale):
     state.frames += 1
     if state.frames % TARGET_FPS == 0:
         elapsed = now - state.beginning_time
-        if elapsed > 0:
-            print("FPS: {:.2f}".format(TARGET_FPS / elapsed))
+        # if elapsed > 0:
+        #     print("FPS: {:.2f}".format(TARGET_FPS / elapsed))
         state.beginning_time = now
 
-    update_eye_positions(now, eyes, hw, sequence_player)
+    _pump_runloop()
+    update_eye_positions(now, eyes, hw, state, sequence_player)
     update_iris(pupil_scale, state, scene, svg)
-    update_blinks(now, eyes, state)
-    update_lid_tracking(eyes, lid_channels, state)
+    update_blinks(now, eyes, state, sequence_player)
+    update_lid_tracking(eyes, lid_channels, state, sequence_player)
     update_lids(now, left,  scene.left,  svg, scene, False)
     update_lids(now, right, scene.right, svg, scene, True)
     draw_scene(eyes, scene, ctx, debug_overlay)
@@ -115,7 +150,8 @@ def split_pupil(start_value, end_value, duration, variance):
 
             pupil_scale_value = start_value + dv * dt / duration
             pupil_scale_value = max(PUPIL_MIN, min(pupil_scale_value, PUPIL_MAX))
-            frame(pupil_scale_value)
+            if not frame(pupil_scale_value):
+                return
             _frame_sleep(frame_start)
 
 # ── Main ───────────────────────────────────────────────────────────────────────
@@ -144,7 +180,7 @@ def main():
         current_pupil_scale = pupil_value
 
         k = mykeys.read()
-        if k == 27:
+        if k == 27 or quit_event.is_set():
             mykeys.close()
             ctx.display.stop()
             exit(0)

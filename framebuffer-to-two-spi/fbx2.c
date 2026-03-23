@@ -18,12 +18,17 @@
 
 // Options: -o OLED  -t TFT  -i IPS
 //          -b ### SPI bitrate  -w ### window sync interval  -s show FPS
+//          -m mirror mode (both screens show same center region)
 
 // Screen layout: the display is divided in half horizontally. Centered in
 // each half, a 256x256 region (OLED/TFT) or 480x480 region (IPS) is
 // scaled 50% via 2x2 box filter to produce the 128x128 or 240x240 bitmap
 // sent to each SPI screen. Configure the eye renderer for 640x480 (OLED/TFT)
 // or 1280x720 (IPS). The 2x2 filter gives effective 16x antialiasing.
+//
+// With -m (mirror mode), both screens show the same center region of the
+// display instead of left/right halves. Useful for fullscreen apps like
+// Doom where both eyes should see the same image.
 
 // Written by Phil Burgess / Paint Your Dragon for Adafruit Industries.
 // MIT license.
@@ -226,7 +231,16 @@ static void commandList(const uint8_t *ptr) {
 static volatile int running = 1;
 
 static void signalHandler(int sig) {
-    running = 0;
+    // Send SSD1351 Display OFF (0xAE) to both screens immediately.
+    // Done here because the main thread may be blocked on
+    // pthread_barrier_wait, which is not interrupted by signals.
+    uint8_t cmd = 0xAE;
+    setDC(0);
+    xfer.tx_buf = (__u64)(uintptr_t)&cmd;
+    xfer.len    = 1;
+    (void)ioctl(eye[0].fd, SPI_IOC_MESSAGE(1), &xfer);
+    (void)ioctl(eye[1].fd, SPI_IOC_MESSAGE(1), &xfer);
+    _exit(0);
 }
 
 void *spiThreadFunc(void *data) {
@@ -264,16 +278,18 @@ int main(int argc, char *argv[]) {
   setbuf(stdout, NULL);
 
 
-	uint8_t showFPS   = 0;
+	uint8_t showFPS   = 0,
+	        mirror    = 0;
 	int     bitrate   = 0,
 	        winFrames = 1,
 	        i, j, fd;
 
-	while((i = getopt(argc, argv, "otib:w:s")) != -1) {
+	while((i = getopt(argc, argv, "otimb:w:s")) != -1) {
 		switch(i) {
 		   case 'o': screenType = SCREEN_OLED;      break;
 		   case 't': screenType = SCREEN_TFT_GREEN;  break;
 		   case 'i': screenType = SCREEN_IPS;        break;
+		   case 'm': mirror    = 1;                  break;
 		   case 'b': bitrate   = strtol(optarg, NULL, 0); break;
 		   case 'w': winFrames = strtol(optarg, NULL, 0); break;
 		   case 's': showFPS   = 1;                  break;
@@ -461,9 +477,19 @@ int main(int argc, char *argv[]) {
 	for(m = ximg->green_mask; !(m & 1); m >>= 1) gShift++;
 	for(m = ximg->blue_mask;  !(m & 1); m >>= 1) bShift++;
 
-	int offset0 = width * ((height - screenInfo[screenType].height) / 2) +
-	             (width / 2 - screenInfo[screenType].width) / 2,
-	    offset1 = offset0 + width / 2;
+	// Eye crop offsets into the downsampled buffer.
+	// Default: left half → eye 0, right half → eye 1.
+	// Mirror mode (-m): both eyes show the same center region.
+	int offset0, offset1;
+	if(mirror) {
+		offset0 = width * ((height - screenInfo[screenType].height) / 2) +
+		         (width - screenInfo[screenType].width) / 2;
+		offset1 = offset0;
+	} else {
+		offset0 = width * ((height - screenInfo[screenType].height) / 2) +
+		         (width / 2 - screenInfo[screenType].width) / 2;
+		offset1 = offset0 + width / 2;
+	}
 
 	uint16_t *pixelBuf;
 	if(!(pixelBuf = (uint16_t *)malloc(width * height * 2)))
@@ -483,7 +509,10 @@ int main(int argc, char *argv[]) {
 	          h = screenInfo[screenType].height;
 
 
-	for(;;) {
+	signal(SIGTERM, signalHandler);
+	signal(SIGINT,  signalHandler);
+
+	while(running) {
 
 		// Capture current X frame into shared memory
 		XShmGetImage(dpy, root, ximg, 0, 0, AllPlanes);
@@ -554,6 +583,8 @@ int main(int argc, char *argv[]) {
 	shmdt(shminfo.shmaddr);
 	shmctl(shminfo.shmid, IPC_RMID, 0);
 	XCloseDisplay(dpy);
+	close(eye[0].fd);
+	close(eye[1].fd);
 	close(gpioFd);
 	return 0;
 }

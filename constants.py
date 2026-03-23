@@ -1,13 +1,17 @@
 from enum import Enum, auto
 
 DEBUG_MOVEMENT  = False
+KEYFRAME_STEP   = False  # Space bar steps one keyframe at a time (SCRIPTED mode only)
+
+GAMEPAD_ENABLED = True
+GAMEPAD_QUIT_COMBO = ("buttonOptions", "buttonMenu")  # Select (−) + Start (+)
 
 # Eye motion configuration
 TARGET_FPS      = 60
 AUTO_BLINK      = True  # Eyes blink autonomously
 CRAZY_EYES      = False # Each eye moves in different directions
 MIRROR_LIDS     = True  # Right eye lid controls mirror left; False = independent (channels 3 & 4)
-TRACKING        = True  # Eyelid tracks pupil
+EYELID_TRACKING = True  # Eyelid tracks pupil
 ROTATE_EYES     = False # Set True when running on hardware
 ROTATE_DEGREES  = 180   # Screen rotation in degrees
 
@@ -28,7 +32,7 @@ class ControlMode(Enum):
     MANUAL     = auto() # 2
     SCRIPTED   = auto() # 3
 
-CONTROL_MODE = ControlMode.SCRIPTED
+CONTROL_MODE = ControlMode.RANDOM
 
 # TODO - There will be more expressions later that would be selected by end-user
 # Expression sequence file

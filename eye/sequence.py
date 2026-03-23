@@ -1,14 +1,28 @@
 import json
+
+from constants import AUTO_BLINK, EYELID_TRACKING, KEYFRAME_STEP
 from models.point import Point, smoothstep
 
 
 class Keyframe:
-    def __init__(self, destination, move_duration, hold_duration, pupil_scale=None, control=None):
+    def __init__(self, destination, move_duration, hold_duration, pupil_scale=None, control=None,
+                 lid_weight=None, auto_blink=None, eyelid_tracking=None):
+
         self.destination = Point(*destination)
         self.move_duration = move_duration
         self.hold_duration = hold_duration
         self.pupil_scale = pupil_scale  # None = don't override
         self.control = Point(*control) if control else None  # Bézier ctrl pt
+
+        # None = not authored; player tracks sticky state
+        self.auto_blink = auto_blink
+        self.eyelid_tracking = eyelid_tracking
+
+        # Normalize lid_weight: [u, l] → per-eye dict; None stays None
+        if isinstance(lid_weight, list) and len(lid_weight) == 2:
+            self.lid_weight = {"left": lid_weight, "right": lid_weight}
+        else:
+            self.lid_weight = lid_weight # dict with "left"/"right" keys, or None
 
 class SequencePlayer:
     def __init__(self, path):
@@ -18,23 +32,32 @@ class SequencePlayer:
         self.keyframes = [Keyframe(**kf) for kf in raw["data"]]
         self.index     = -1
         self._armed    = True   # ready to push next destination
+        self._step_pending = False  # set by step(); consumed in update()
+
+        # Sticky flags — start from global constants, updated when a keyframe authors them
+        self.auto_blink = AUTO_BLINK
+        self.eyelid_tracking = EYELID_TRACKING
 
     # ------------------------------------------------------------------
     def update(self, eye_state, now):
         """Call once per frame instead of eye_state.update_position(now)."""
+        self._move(eye_state, now)
 
-        self._move(eye_state, now)  # advance first; may set is_moving=False this frame
-
-        # Hold check runs after _move so the frame movement ends counts toward hold.
-        # dt=0 on that frame means hold_duration=0.0 advances immediately.
         if not eye_state.is_moving:
             dt = now - eye_state.start_time
-            if self._armed or (len(self.keyframes) > 1 and dt >= eye_state.hold_duration):
+            can_advance = self._armed or (len(self.keyframes) > 1 and dt >= eye_state.hold_duration)
+            if KEYFRAME_STEP:
+                can_advance = can_advance and self._step_pending
+                self._step_pending = False
+            if can_advance:
                 self._advance(eye_state, now)
-                self._move(eye_state, now)   # begin new movement in same frame
+                self._move(eye_state, now)
 
+    def step(self):
+        """Request one keyframe advance. Only used when KEYFRAME_STEP is True."""
+        self._step_pending = True
 
-    # ------------------------------------------------------------------
+        # ------------------------------------------------------------------
     def _advance(self, eye_state, now):
         """
         Advances to the next keyframe and sets up the eye state for the subsequent movement.
@@ -56,6 +79,15 @@ class SequencePlayer:
         """
         self.index = (self.index + 1) % len(self.keyframes)
         kf = self.keyframes[self.index]
+
+        if KEYFRAME_STEP:
+            print(f"[step] kf {self.index}  dest=({kf.destination.x:.0f},{kf.destination.y:.0f})"
+                  f"  auto_blink={self.auto_blink}  tracking={self.eyelid_tracking}")
+
+        if kf.auto_blink is not None:
+            self.auto_blink = kf.auto_blink
+        if kf.eyelid_tracking is not None:
+            self.eyelid_tracking = kf.eyelid_tracking
 
         eye_state.start.copy_from(eye_state.current)
         eye_state.destination.set(kf.destination.x, kf.destination.y)
@@ -131,3 +163,20 @@ class SequencePlayer:
         if kf.pupil_scale is None or prev.pupil_scale is None:
             return None
         return prev.pupil_scale + (kf.pupil_scale - prev.pupil_scale) * self._t
+
+    @property
+    def current_lid_weight(self):
+        """Interpolated lid weights — None if not authored in both this and previous keyframe.
+        Returns:
+            dict | None: {"left": (upper, lower), "right": (upper, lower)}, or None.
+        """
+        kf = self.keyframes[self.index]
+        prev = self.keyframes[self.index - 1]
+        if kf.lid_weight is None or prev.lid_weight is None:
+            return None
+        result = {}
+        for side in ("left", "right"):
+            pu, pl = prev.lid_weight[side]
+            ku, kl = kf.lid_weight[side]
+            result[side] = (pu + (ku - pu) * self._t, pl + (kl - pl) * self._t)
+        return result

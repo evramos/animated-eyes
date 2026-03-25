@@ -43,19 +43,23 @@ _PROFILE_TO_GC = {
 
 # evdev keycode name → internal button name (same convention as above)
 _EVDEV_TO_GC = {
-    "BTN_SOUTH":  "buttonA",
-    "BTN_EAST":   "buttonB",
-    "BTN_NORTH":  "buttonX",
-    "BTN_WEST":   "buttonY",
-    "BTN_START":  "buttonMenu",
-    "BTN_SELECT": "buttonOptions",
-    "BTN_MODE":   "buttonHome",
-    "BTN_TL":     "leftShoulder",
-    "BTN_TR":     "rightShoulder",
-    "BTN_TL2":    "leftTrigger",
-    "BTN_TR2":    "rightTrigger",
-    "BTN_THUMBL": "leftThumbstickButton",
-    "BTN_THUMBR": "rightThumbstickButton",
+    "BTN_SOUTH":      "buttonA",
+    "BTN_EAST":       "buttonB",
+    "BTN_NORTH":      "buttonX",
+    "BTN_WEST":       "buttonY",
+    "BTN_START":      "buttonMenu",
+    "BTN_SELECT":     "buttonOptions",
+    "BTN_MODE":       "buttonHome",
+    "BTN_TL":         "leftShoulder",
+    "BTN_TR":         "rightShoulder",
+    "BTN_TL2":        "leftTrigger",
+    "BTN_TR2":        "rightTrigger",
+    "BTN_THUMBL":     "leftThumbstickButton",
+    "BTN_THUMBR":     "rightThumbstickButton",
+    "BTN_DPAD_UP":    "dpad_up",
+    "BTN_DPAD_DOWN":  "dpad_down",
+    "BTN_DPAD_LEFT":  "dpad_left",
+    "BTN_DPAD_RIGHT": "dpad_right",
 }
 
 # ABS_HAT axis value → dpad button name
@@ -220,6 +224,11 @@ class GamepadListener:
                 continue
 
             print(f"[gamepad] connected: {gamepad.name}")
+            # caps = gamepad.capabilities(verbose=True)
+            # btn_names = [name for name, _ in caps.get(("EV_KEY", evdev.ecodes.EV_KEY), [])]
+            # abs_names = [name for name, _ in caps.get(("EV_ABS", evdev.ecodes.EV_ABS), [])]
+            # print(f"[gamepad] buttons: {btn_names}", flush=True)
+            # print(f"[gamepad] axes:    {abs_names}", flush=True)
 
             try:
                 for event in gamepad.read_loop():
@@ -246,6 +255,20 @@ class GamepadListener:
                             self._on_release("dpad_down")
                             if event.value in _DPAD_Y:
                                 self._on_press(_DPAD_Y[event.value])
+                        elif event.code == evdev.ecodes.ABS_X:
+                            self._on_release("dpad_left")
+                            self._on_release("dpad_right")
+                            if event.value < 64:
+                                self._on_press("dpad_left")
+                            elif event.value > 192:
+                                self._on_press("dpad_right")
+                        elif event.code == evdev.ecodes.ABS_Y:
+                            self._on_release("dpad_up")
+                            self._on_release("dpad_down")
+                            if event.value < 64:
+                                self._on_press("dpad_up")
+                            elif event.value > 192:
+                                self._on_press("dpad_down")
 
             except OSError:
                 print("[gamepad] disconnected — waiting to reconnect...")

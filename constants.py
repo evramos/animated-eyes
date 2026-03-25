@@ -17,8 +17,8 @@ ROTATE_DEGREES  = 180   # Screen rotation in degrees
 
 # Analog input configuration (requires Snake Eyes Bonnet)
 PUPIL_IN        = -1    # Pupil control (-1 = auto)
-JOYSTICK_X_IN   = 1     # Eye horizontal position (-1 = auto)
-JOYSTICK_Y_IN   = 2     # Eye vertical position (-1 = auto)
+JOYSTICK_X_IN   = -1     # Eye horizontal position (-1 = auto)
+JOYSTICK_Y_IN   = -1     # Eye vertical position (-1 = auto)
 PUPIL_SMOOTH    = 16    # Filter input from PUPIL_IN if > 0
 
 # GPIO pin assignments

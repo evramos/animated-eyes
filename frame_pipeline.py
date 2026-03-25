@@ -40,6 +40,21 @@ class FrameState:
     control_mode:       ControlMode = CONTROL_MODE
     wink_left:          bool        = False
     wink_right:         bool        = False
+    dpad_left:          bool        = False
+    dpad_right:         bool        = False
+    dpad_up:            bool        = False
+    dpad_down:          bool        = False
+    button_a_held:      bool        = False
+    button_y_held:      bool        = False
+    manual_x:           float       = 0.0   # current eye angle in MANUAL mode
+    manual_y:           float       = 0.0
+    manual_last_time:   float       = 0.0
+    current_pupil:      float       = PUPIL_SCALE
+    manual_pupil:       float       = PUPIL_SCALE
+    trigger_left:       bool        = False
+    trigger_right:      bool        = False
+    auto_blink:         bool        = AUTO_BLINK
+    crazy_eyes:         bool        = CRAZY_EYES
 
 
 # ── Lid preview channels ───────────────────────────────────────────────────────
@@ -81,6 +96,34 @@ def update_eye_positions(now, eyes, hw, state, sequence_player=None):
             if JOYSTICK_X_IN >= 0 and JOYSTICK_Y_IN >= 0:
                 eyes.left.current.x = _adc_to_angle(hw.bonnet.channel[JOYSTICK_X_IN])
                 eyes.left.current.y = _adc_to_angle(hw.bonnet.channel[JOYSTICK_Y_IN])
+            else:
+                _SPEED  = 60.0  # degrees/sec while d-pad held
+                _SPRING = 60.0  # degrees/sec return to center when released
+                dt = min(now - state.manual_last_time, 0.05) if state.manual_last_time else 0.0
+                state.manual_last_time = now
+
+                _lid_mod = state.button_a_held or state.button_y_held
+
+                if not _lid_mod and state.dpad_left:
+                    state.manual_x = max(-30.0, state.manual_x - _SPEED * dt)
+                elif not _lid_mod and state.dpad_right:
+                    state.manual_x = min( 30.0, state.manual_x + _SPEED * dt)
+                elif state.manual_x > 0:
+                    state.manual_x = max(0.0, state.manual_x - _SPRING * dt)
+                elif state.manual_x < 0:
+                    state.manual_x = min(0.0, state.manual_x + _SPRING * dt)
+
+                if not _lid_mod and state.dpad_up:
+                    state.manual_y = min( 30.0, state.manual_y + _SPEED * dt)
+                elif not _lid_mod and state.dpad_down:
+                    state.manual_y = max(-30.0, state.manual_y - _SPEED * dt)
+                elif state.manual_y > 0:
+                    state.manual_y = max(0.0, state.manual_y - _SPRING * dt)
+                elif state.manual_y < 0:
+                    state.manual_y = min(0.0, state.manual_y + _SPRING * dt)
+
+                eyes.left.current.x = state.manual_x
+                eyes.left.current.y = state.manual_y
 
         case ControlMode.SCRIPTED:
             if sequence_player:
@@ -94,7 +137,7 @@ def update_eye_positions(now, eyes, hw, state, sequence_player=None):
         case ControlMode.RANDOM:
             eyes.left.update_position(now)
 
-    if CRAZY_EYES:
+    if state.crazy_eyes:
         eyes.right.update_position(now)
 
 
@@ -134,7 +177,7 @@ def update_blinks(now, eyes, state, sequence_player=None):
         sequence_player (SequencePlayer|None): When provided, reads auto_blink from the
                                                active keyframe instead of the constant.
     """
-    auto_blink = sequence_player.auto_blink if sequence_player else AUTO_BLINK
+    auto_blink = state.auto_blink
 
     if auto_blink and (now - state.time_of_last_blink) >= state.time_to_next_blink:
         state.time_of_last_blink = now
@@ -170,7 +213,33 @@ def update_lid_tracking(eyes, lid_channels, state, sequence_player=None):
         sequence_player (SequencePlayer|None): When provided, reads lid_weight and
                                                eyelid_tracking from the active keyframe.
     """
-    right_independent = CRAZY_EYES or not MIRROR_LIDS
+    # MANUAL lid override — Y/A + dpad adjusts right/left lid tracking directly.
+    # If EYELID_TRACKING is False, return early so positions stay in place after release.
+    # If EYELID_TRACKING is True, fall through so tracking resumes when buttons are released.
+    if state.control_mode == ControlMode.MANUAL:
+        _STEP = 0.5 / TARGET_FPS
+        if state.button_y_held:
+            if state.dpad_up:
+                eyes.right.upper_tracking_pos = max(0.0, eyes.right.upper_tracking_pos - _STEP)
+            elif state.dpad_down:
+                eyes.right.upper_tracking_pos = min(1.0, eyes.right.upper_tracking_pos + _STEP)
+            if state.dpad_left:
+                eyes.right.lower_tracking_pos = max(0.0, eyes.right.lower_tracking_pos - _STEP)
+            elif state.dpad_right:
+                eyes.right.lower_tracking_pos = min(1.0, eyes.right.lower_tracking_pos + _STEP)
+        if state.button_a_held:
+            if state.dpad_up:
+                eyes.left.upper_tracking_pos = max(0.0, eyes.left.upper_tracking_pos - _STEP)
+            elif state.dpad_down:
+                eyes.left.upper_tracking_pos = min(1.0, eyes.left.upper_tracking_pos + _STEP)
+            if state.dpad_left:
+                eyes.left.lower_tracking_pos = max(0.0, eyes.left.lower_tracking_pos - _STEP)
+            elif state.dpad_right:
+                eyes.left.lower_tracking_pos = min(1.0, eyes.left.lower_tracking_pos + _STEP)
+        if (state.button_y_held or state.button_a_held) or not EYELID_TRACKING:
+            return
+
+    right_independent = state.crazy_eyes or not MIRROR_LIDS
 
     lid_weight = sequence_player.current_lid_weight if sequence_player else None
     do_tracking = sequence_player.eyelid_tracking if sequence_player else EYELID_TRACKING
@@ -236,7 +305,7 @@ def update_lids(now, eye, eye_meshes, svg, scene, flip):
     eye.lids.lower.update(eye_meshes.lids.lower, svg.lower_lid, _blend_lid(eye.lower_tracking_pos, n), scene.lower_lid_regen_threshold, flip)
 
 
-def draw_scene(eyes, scene, ctx, debug_overlay):
+def draw_scene(eyes, scene, ctx, debug_overlay, state):
     """Rotate all meshes to current eye positions and draw the frame.
 
     Applies X/Y rotation from eye position, optional Z rotation when ROTATE_EYES
@@ -248,7 +317,7 @@ def draw_scene(eyes, scene, ctx, debug_overlay):
         ctx           (DisplayContext): Display and shader context.
         debug_overlay (DebugOverlay|None): Drawn instead of the scene when DEBUG_MOVEMENT is True.
     """
-    right_eye_pos = eyes.right if CRAZY_EYES else eyes.left
+    right_eye_pos = eyes.right if state.crazy_eyes else eyes.left
 
     # Rotate iris and sclera to current eye angles
     for eye, meshes, convergence in (

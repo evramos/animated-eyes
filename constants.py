@@ -3,9 +3,6 @@ from enum import Enum, auto
 DEBUG_MOVEMENT  = False
 KEYFRAME_STEP   = False  # Space bar steps one keyframe at a time (SCRIPTED mode only)
 
-GAMEPAD_ENABLED = True
-GAMEPAD_QUIT_COMBO = ("buttonOptions", "buttonMenu")  # Select (−) + Start (+)
-
 # Eye motion configuration
 TARGET_FPS      = 60
 AUTO_BLINK      = True  # Eyes blink autonomously
@@ -36,7 +33,7 @@ CONTROL_MODE = ControlMode.RANDOM
 
 # TODO - There will be more expressions later that would be selected by end-user
 # Expression sequence file
-SEQUENCE_FILE = "keyframes/sample4.json"
+SEQUENCE_FILE = "keyframes/sample1.json"
 
 # Pupil and convergence settings
 PUPIL_SCALE     = 0.5

@@ -1,3 +1,4 @@
+import glob
 import json
 
 from constants import AUTO_BLINK, EYELID_TRACKING, KEYFRAME_STEP
@@ -24,19 +25,43 @@ class Keyframe:
         else:
             self.lid_weight = lid_weight # dict with "left"/"right" keys, or None
 
+# noinspection PyAttributeOutsideInit
 class SequencePlayer:
     def __init__(self, path):
-        self._t = 0.0
+        self.load(path)
+        self._files      = sorted(glob.glob("keyframes/*.json"))
+        self._file_index = self._files.index(path) if path in self._files else 0
+        print(f"[seq] {len(self._files)} keyframe files: {[f.split('/')[-1] for f in self._files]}")
+        print(f"[seq] active: {self.current_file or 'none'}")
+
+    @property
+    def current_file(self):
+        """Basename of the active keyframe file, or None if no files found."""
+        return self._files[self._file_index].split('/')[-1] if self._files else None
+
+    def cycle(self, delta):
+        """Advance to the next/previous keyframe file by delta steps and reload."""
+        if not self._files:
+            return
+        self._file_index = (self._file_index + delta) % len(self._files)
+        self.load(self._files[self._file_index])
+        print(f"[seq] → {self.current_file}", flush=True)
+
+    def load(self, path):
+        """Replace the active sequence in-place, resetting all playback state."""
         with open(path) as f:
             raw = json.load(f)
-        self.keyframes = [Keyframe(**kf) for kf in raw["data"]]
-        self.index     = -1
-        self._armed    = True   # ready to push next destination
-        self._step_pending = False  # set by step(); consumed in update()
+        self._t              = 0.0
+        self.index           = -1
+        self.keyframes       = [Keyframe(**kf) for kf in raw["data"]]
 
         # Sticky flags — start from global constants, updated when a keyframe authors them
-        self.auto_blink = AUTO_BLINK
+        self.auto_blink      = AUTO_BLINK
         self.eyelid_tracking = EYELID_TRACKING
+
+        self._armed          = True   # ready to push next destination
+        self._step_pending   = False  # set by step(); consumed in update()
+
 
     # ------------------------------------------------------------------
     def update(self, eye_state, now):

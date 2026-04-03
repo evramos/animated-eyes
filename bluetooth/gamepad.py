@@ -17,54 +17,7 @@ import platform
 import threading
 import time
 
-from constants import GAMEPAD_QUIT_COMBO
-
-# macOS physicalInputProfile key → internal button name
-_PROFILE_TO_GC = {
-    "Button A":               "buttonA",
-    "Button B":               "buttonB",
-    "Button X":               "buttonX",
-    "Button Y":               "buttonY",
-    "Button Home":            "buttonHome",
-    "Button Menu":            "buttonMenu",
-    "Button Options":         "buttonOptions",
-    "Button Share":           "buttonShare",
-    "Left Shoulder":          "leftShoulder",
-    "Left Trigger":           "leftTrigger",
-    "Right Shoulder":         "rightShoulder",
-    "Right Trigger":          "rightTrigger",
-    "Left Thumbstick Button": "leftThumbstickButton",
-    "Right Thumbstick Button":"rightThumbstickButton",
-    "Direction Pad Up":       "dpad_up",
-    "Direction Pad Down":     "dpad_down",
-    "Direction Pad Left":     "dpad_left",
-    "Direction Pad Right":    "dpad_right",
-}
-
-# evdev keycode name → internal button name (same convention as above)
-_EVDEV_TO_GC = {
-    "BTN_SOUTH":      "buttonA",
-    "BTN_EAST":       "buttonB",
-    "BTN_NORTH":      "buttonX",
-    "BTN_WEST":       "buttonY",
-    "BTN_START":      "buttonMenu",
-    "BTN_SELECT":     "buttonOptions",
-    "BTN_MODE":       "buttonHome",
-    "BTN_TL":         "leftShoulder",
-    "BTN_TR":         "rightShoulder",
-    "BTN_TL2":        "leftTrigger",
-    "BTN_TR2":        "rightTrigger",
-    "BTN_THUMBL":     "leftThumbstickButton",
-    "BTN_THUMBR":     "rightThumbstickButton",
-    "BTN_DPAD_UP":    "dpad_up",
-    "BTN_DPAD_DOWN":  "dpad_down",
-    "BTN_DPAD_LEFT":  "dpad_left",
-    "BTN_DPAD_RIGHT": "dpad_right",
-}
-
-# ABS_HAT axis value → dpad button name
-_DPAD_X = {-1: "dpad_left",  1: "dpad_right"}
-_DPAD_Y = {-1: "dpad_up",    1: "dpad_down"}
+from bluetooth.constants import *
 
 
 class GamepadListener:
@@ -81,11 +34,7 @@ class GamepadListener:
         self._combo_active = set()   # frozensets of combos already fired
         self._press_cbs    = {}      # button name → [callback]
         self._release_cbs  = {}      # button name → [callback]
-
-        combo_str = " + ".join(GAMEPAD_QUIT_COMBO)
-        self._combos = [
-            (frozenset(GAMEPAD_QUIT_COMBO), lambda: self._trigger_quit(combo_str)),
-        ]
+        self._combos       = []
 
         target = self._run_objc if platform.system() == "Darwin" else self._run_evdev
         self._thread = threading.Thread(target=target, daemon=True, name="gamepad")
@@ -106,10 +55,6 @@ class GamepadListener:
         self._thread.start()
 
     # ── Shared event dispatch ─────────────────────────────────────────────────
-
-    def _trigger_quit(self, combo_str: str):
-        print(f"[gamepad] {combo_str} → exiting")
-        self._quit.set()
 
     def _on_press(self, name: str):
         if name in self._held:
@@ -155,8 +100,7 @@ class GamepadListener:
                 Foundation.NSDate.dateWithTimeIntervalSinceNow_(interval)
             )
 
-        combo_str = " + ".join(GAMEPAD_QUIT_COMBO)
-        print(f"[gamepad] waiting for controller...  quit combo: {combo_str}")
+        print(f"[gamepad] waiting for controller...  quit combo: {" + ".join(sorted(GAMEPAD_QUIT_COMBO))}")
 
         while not self._quit.is_set():
             tick(0.5)
@@ -165,7 +109,7 @@ class GamepadListener:
                 continue
 
             ctrl = controllers[0]
-            print(f"[gamepad] connected: {ctrl.vendorName()}", flush=True)
+            print(f"[gamepad] connected: {ctrl.vendorName()}")
 
             profile = ctrl.physicalInputProfile()
             if not profile:
@@ -174,10 +118,14 @@ class GamepadListener:
             profile_buttons = profile.buttons()
             buttons = [
                 (gc_name, profile_buttons[profile_key])
-                for profile_key, gc_name in _PROFILE_TO_GC.items()
+                for profile_key, gc_name in PROFILE_TO_GC.items()
                 if profile_key in profile_buttons
             ]
-            print(f"[gamepad] mapped {len(buttons)} buttons", flush=True)
+            print(f"[gamepad] mapped {len(buttons)} buttons")
+
+            # profile_axes = profile.axes()
+            # dpad_x_axis  = profile_axes.get("Left Thumbstick X Axis")
+            # dpad_y_axis  = profile_axes.get("Left Thumbstick Y Axis")
 
             while not self._quit.is_set():
                 tick()
@@ -192,6 +140,20 @@ class GamepadListener:
                         self._on_press(name)
                     else:
                         self._on_release(name)
+                #
+                # if dpad_x_axis:
+                #     v = dpad_x_axis.value()
+                #     if v < -0.5: self._on_press(DPAD_LEFT)
+                #     else:        self._on_release(DPAD_LEFT)
+                #     if v > 0.5:  self._on_press(DPAD_RIGHT)
+                #     else:        self._on_release(DPAD_RIGHT)
+                #
+                # if dpad_y_axis:
+                #     v = dpad_y_axis.value()
+                #     if v > 0.5:  self._on_press(DPAD_UP)
+                #     else:        self._on_release(DPAD_UP)
+                #     if v < -0.5: self._on_press(DPAD_DOWN)
+                #     else:        self._on_release(DPAD_DOWN)
 
     # ── Linux / Pi — evdev ────────────────────────────────────────────────────
 
@@ -204,12 +166,11 @@ class GamepadListener:
 
         code_to_name = {
             getattr(evdev.ecodes, ev_name): gc_name
-            for ev_name, gc_name in _EVDEV_TO_GC.items()
+            for ev_name, gc_name in EVDEV_TO_GC.items()
             if hasattr(evdev.ecodes, ev_name)
         }
 
-        combo_str = " + ".join(GAMEPAD_QUIT_COMBO)
-        print(f"[gamepad] waiting for controller...  quit combo: {combo_str}")
+        print(f"[gamepad] waiting for controller...  quit combo: {" + ".join(sorted(GAMEPAD_QUIT_COMBO))}")
 
         while not self._quit.is_set():
             gamepad = None
@@ -235,7 +196,6 @@ class GamepadListener:
                     if self._quit.is_set():
                         return
 
-
                     if event.type == evdev.ecodes.EV_KEY:
                         name = code_to_name.get(event.code)
                         if name:
@@ -246,29 +206,25 @@ class GamepadListener:
 
                     elif event.type == evdev.ecodes.EV_ABS:
                         if event.code == evdev.ecodes.ABS_HAT0X:
-                            self._on_release("dpad_left")
-                            self._on_release("dpad_right")
-                            if event.value in _DPAD_X:
-                                self._on_press(_DPAD_X[event.value])
+                            self._on_release(DPAD_LEFT)
+                            self._on_release(DPAD_RIGHT)
+                            if event.value in DPAD_X:
+                                self._on_press(DPAD_X[event.value])
                         elif event.code == evdev.ecodes.ABS_HAT0Y:
-                            self._on_release("dpad_up")
-                            self._on_release("dpad_down")
-                            if event.value in _DPAD_Y:
-                                self._on_press(_DPAD_Y[event.value])
+                            self._on_release(DPAD_UP)
+                            self._on_release(DPAD_DOWN)
+                            if event.value in DPAD_Y:
+                                self._on_press(DPAD_Y[event.value])
                         elif event.code == evdev.ecodes.ABS_X:
-                            self._on_release("dpad_left")
-                            self._on_release("dpad_right")
-                            if event.value < 64:
-                                self._on_press("dpad_left")
-                            elif event.value > 192:
-                                self._on_press("dpad_right")
+                            self._on_release(DPAD_LEFT)
+                            self._on_release(DPAD_RIGHT)
+                            if btn := DPAD_LEFT if event.value < 64 else DPAD_RIGHT if event.value > 192 else None:
+                                self._on_press(btn)
                         elif event.code == evdev.ecodes.ABS_Y:
-                            self._on_release("dpad_up")
-                            self._on_release("dpad_down")
-                            if event.value < 64:
-                                self._on_press("dpad_up")
-                            elif event.value > 192:
-                                self._on_press("dpad_down")
+                            self._on_release(DPAD_UP)
+                            self._on_release(DPAD_DOWN)
+                            if btn := DPAD_UP if event.value < 64 else DPAD_DOWN if event.value > 192 else None:
+                                self._on_press(btn)
 
             except OSError:
                 print("[gamepad] disconnected — waiting to reconnect...")

@@ -4,7 +4,7 @@
 //  - SSD1351 OLED   www.adafruit.com/products/1431
 //  - ST7789 IPS TFT www.adafruit.com/products/3787
 //  - ST7735 TFT LCD www.adafruit.com/products/2088 ("green tab" version)
-// NOT COMPATIBLE WITH OTHER DISPLAYS.
+// NOT COMPATIBLE WITH OTHER DISPLAYS, PERIOD.
 
 // Requires SPI and (optionally) I2C enabled in /boot/firmware/config.txt:
 //     dtparam=spi=on
@@ -19,6 +19,7 @@
 // Options: -o OLED  -t TFT  -i IPS
 //          -b ### SPI bitrate  -w ### window sync interval  -s show FPS
 //          -m mirror mode (both screens show same center region)
+//          -r rotate 180° (for upside-down mounted screens)
 
 // Screen layout: the display is divided in half horizontally. Centered in
 // each half, a 256x256 region (OLED/TFT) or 480x480 region (IPS) is
@@ -68,28 +69,33 @@
 
 uint8_t screenType = SCREEN_OLED;
 
+// Screen initialization commands and data. Derived from Adafruit Arduino libraries, stripped bare here...see
+// corresponding original libraries for a more in-depth explanation of each screen command.
+
+// OLED initialization distilled from Adafruit SSD1351 Arduino library
+// https://newhavendisplay.com/content/app_notes/SSD1351.pdf
 static const uint8_t initOLED[] = {
-  0xFD,  1, 0x12,
-  0xFD,  1, 0xB1,
-  0xAE,  0,
-  0xB3,  1, 0xF0,
-  0xCA,  1, 0x7F,
-  0xA2,  1, 0x00,
-  0xA1,  1, 0x00,
-  0xA0,  1, 0x74,
-  0xB5,  1, 0x00,
-  0xAB,  1, 0x01,
-  0xB4,  3, 0xA0, 0xB5, 0x55,
-  0xC1,  3, 0xFF, 0xA3, 0xFF,
-  0xC7,  1, 0x0F,
-  0xB1,  1, 0x32,
-  0xBB,  1, 0x07,
-  0xB2,  3, 0xA4, 0x00, 0x00,
-  0xB6,  1, 0x01,
-  0xBE,  1, 0x05,
-  0xA6,  0,
-  0xAF,  0,
-  0xB8, 64,
+  0xFD,  1, 0x12,             // Command lock setting, unlock 1/2
+  0xFD,  1, 0xB1,             // Command lock setting, unlock 2/2
+  0xAE,  0,                   // Display off
+  0xB3,  1, 0xF0,             // Clock div (F1=typical, F0=faster refresh)
+  0xCA,  1, 0x7F,             // Duty cycle (128 lines)
+  0xA2,  1, 0x00,             // Display offset (0)
+  0xA1,  1, 0x00,             // Start line (0)
+  0xA0,  1, 0x74,             // Set remap, color depth (5/6/5)
+  0xB5,  1, 0x00,             // Set GPIO (disable)
+  0xAB,  1, 0x01,             // Function select (internal regulator)
+  0xB4,  3, 0xA0, 0xB5, 0x55, // Set VSL (external)
+  0xC1,  3, 0xFF, 0xA3, 0xFF, // Contrast A/B/C
+  0xC7,  1, 0x0F,             // Contrast master (reset)
+  0xB1,  1, 0x32,             // Set precharge & discharge
+  0xBB,  1, 0x07,             // Precharge voltage of color A/B/C
+  0xB2,  3, 0xA4, 0x00, 0x00, // Display enhancement
+  0xB6,  1, 0x01,             // Precharge period
+  0xBE,  1, 0x05,             // Set VcomH (0.82 x Vcc)
+  0xA6,  0,                   // Normal display
+  0xAF,  0,                   // Display on
+  0xB8, 64,                   // Gamma table, 64 values, no delay
     0x00, 0x08, 0x0D, 0x12, 0x17, 0x1B, 0x1F, 0x22,
     0x26, 0x2A, 0x2D, 0x30, 0x34, 0x37, 0x3A, 0x3D,
     0x40, 0x43, 0x46, 0x49, 0x4C, 0x4F, 0x51, 0x54,
@@ -98,83 +104,109 @@ static const uint8_t initOLED[] = {
     0x7F, 0x82, 0x84, 0x86, 0x89, 0x8B, 0x8D, 0x90,
     0x92, 0x94, 0x97, 0x99, 0x9B, 0x9D, 0x9F, 0xA2,
     0xA4, 0xA6, 0xA8, 0xAA, 0xAD, 0xAF, 0xB1, 0xB3,
-  0x00 },
-initTFT[] = {
-  0x01, 0x80, 150,
-  0x11, 0x80, 255,
-  0xB1,    3, 0x01, 0x2C, 0x2D,
-  0xB2,    3, 0x01, 0x2C, 0x2D,
-  0xB3,    6, 0x01, 0x2C, 0x2D, 0x01, 0x2C, 0x2D,
-  0xB4,    1, 0x07,
-  0xC0,    3, 0xA2, 0x02, 0x84,
-  0xC1,    1, 0xC5,
-  0xC2,    2, 0x0A, 0x00,
-  0xC3,    2, 0x8A, 0x2A,
-  0xC4,    2, 0x8A, 0xEE,
-  0xC5,    1, 0x0E,
-  0x20,    0,
-  0x36,    1, 0xC8,
-  0x3A,    1, 0x05,
-  0x2A,    4, 0x00, 0x00, 0x00, 0x7F,
-  0x2B,    4, 0x00, 0x00, 0x00, 0x7F,
-  0xE0,   16, 0x02, 0x1c, 0x07, 0x12, 0x37, 0x32, 0x29, 0x2d,
-              0x29, 0x25, 0x2B, 0x39, 0x00, 0x01, 0x03, 0x10,
-  0xE1,   16, 0x03, 0x1d, 0x07, 0x06, 0x2E, 0x2C, 0x29, 0x2D,
-              0x2E, 0x2E, 0x37, 0x3F, 0x00, 0x00, 0x02, 0x10,
-  0x13, 0x80,  10,
-  0x29, 0x80, 100,
-  0x00 },
-initIPS[] = {
-  0x01, 0x80, 150,
-  0x11, 0x80, 255,
-  0x3A, 0x81, 0x55,  10,
-  0x36,    1, 0x00,
-  0x26,    1, 0x02,
-  0xBA,    1, 0x04,
-  0x21, 0x80,  10,
-  0x13, 0x80,  10,
-  0x29, 0x80, 255,
-  0x00 },
-winOLED[] = {
-  0x15, 2, 0x00, 0x7F,
-  0x75, 2, 0x00, 0x7F,
-  0x5C,
-  0x00 },
-winTFT[] = {
-  0x2A, 4, 0, 2, 0, 129,
-  0x2B, 4, 0, 3, 0, 130,
-  0x2C,
-  0x00 },
-winIPS[] = {
-  0x2A, 4, 0, 0, 0, 239,
-  0x2B, 4, 0, 0, 0, 239,
-  0x2C,
-  0x00 };
+  0x00 },                     // EOD
 
+// TFT initialization from Adafruit ST7735 Arduino library ('green tab')
+initTFT[] = {
+  0x01, 0x80, 150,            // Software reset, 0 args, w/150ms delay
+  0x11, 0x80, 255,            // Out of sleep mode, 0 args, w/500ms delay
+  0xB1,    3,                 // Frame rate ctrl - normal mode, 3 args:
+    0x01, 0x2C, 0x2D,         // Rate = fosc/(1x2+40) * (LINE+2C+2D)
+  0xB2,    3,                 // Frame rate control - idle mode, 3 args:
+    0x01, 0x2C, 0x2D,         // Rate = fosc/(1x2+40) * (LINE+2C+2D)
+  0xB3,    6,                 // Frame rate ctrl - partial mode, 6 args:
+    0x01, 0x2C, 0x2D,         // Dot inversion mode
+    0x01, 0x2C, 0x2D,         // Line inversion mode
+  0xB4,    1, 0x07,           // Display inversion ctrl: no inversion
+  0xC0,    3,                 // Power control 1, 3 args, no delay:
+    0xA2, 0x02, 0x84,         // -4.6V, AUTO mode
+  0xC1,    1, 0xC5,           // Pwr ctrl 2: VGH25=2.4C VGSEL=-10 VGH=3*AVDD
+  0xC2,    2, 0x0A, 0x00,     // Pwr ctrl 3: opamp current small, boost freq
+  0xC3,    2, 0x8A, 0x2A,     // Pwr ctrl 4: BCLK/2, Opamp small & med low
+  0xC4,    2, 0x8A, 0xEE,     // Power control 5, 2 args, no delay
+  0xC5,    1, 0x0E,           // Power control, 1 arg, no delay
+  0x20,    0,                 // Don't invert display, no args, no delay
+  0x36,    1, 0xC8,           // MADCTL: row addr/col addr, bottom-to-top
+  0x3A,    1, 0x05,           // Set color mode, 1 arg: 16-bit color
+  0x2A,    4,                 // Column addr set, 4 args, no delay:
+    0x00, 0x00, 0x00, 0x7F,   // XSTART = 0, XEND = 127
+  0x2B,    4,                 // Row addr set, 4 args, no delay:
+    0x00, 0x00, 0x00, 0x7F,   // XSTART = 0, XEND = 127
+  0xE0,   16,                 // ???, 16 args, no delay:
+    0x02, 0x1c, 0x07, 0x12, 0x37, 0x32, 0x29, 0x2d,
+    0x29, 0x25, 0x2B, 0x39, 0x00, 0x01, 0x03, 0x10,
+  0xE1,   16,                 // ???, 16 args, no delay:
+    0x03, 0x1d, 0x07, 0x06, 0x2E, 0x2C, 0x29, 0x2D,
+    0x2E, 0x2E, 0x37, 0x3F, 0x00, 0x00, 0x02, 0x10,
+  0x13, 0x80,  10,            // Normal display on, no args, w/10ms delay
+  0x29, 0x80, 100,            // Main screen turn on, no args w/100ms delay
+  0x00 },                     // EOD
+
+// IPS initialization
+initIPS[] = {
+  0x01, 0x80,       150,      // Soft reset, no args, 150 ms delay
+  0x11, 0x80,       255,      // Out of sleep, no args, 500 ms delay
+  0x3A, 0x81, 0x55,  10,      // COLMOD, 1 arg, 10ms delay
+  0x36,    1, 0x00,           // MADCTL, 1 arg (RGB), no delay
+  0x26,    1, 0x02,           // GAMSET, 1 arg (curve 2 (G1.8)), no delay
+  0xBA,    1, 0x04,           // DGMEN, 1 arg (enable gamma), no delay
+  0x21, 0x80,        10,      // INVON, no args, 10 ms delay
+  0x13, 0x80,        10,      // NORON, no args, 10 ms delay
+  0x29, 0x80,       255,      // DISPON, no args, 500 ms delay
+  0x00 },                     // EOD
+
+winOLED[] = {
+  0x15, 2, 0x00, 0x7F,        // Column range
+  0x75, 2, 0x00, 0x7F,        // Row range
+  0x5C,                       // Write to display RAM
+  0x00 },                     // EOD
+
+winTFT[] = {
+  0x2A, 4, 0, 2, 0, 129,      // Column set, xstart, xend (MSB first)
+  0x2B, 4, 0, 3, 0, 130,      // Row set, ystart, yend (MSB first)
+  0x2C,                       // RAM write
+  0x00 },                     // EOD
+
+winIPS[] = {
+  0x2A, 4, 0, 0, 0, 239,      // CASET (column set) xstart, xend (MSB first)
+  0x2B, 4, 0, 0, 0, 239,      // RASET (row set) ystart, yend (MSB first)
+  0x2C,                       // RAMWR (RAM write)
+  0x00 };                     // EOD
+
+// Further data specific to each screen type: pixel dimensions, maximum stable SPI bitrate, pointer to initialization
+// commands above. Datasheet figures for SPI screen throughput don't always match reality; factors like wire length and
+// quality of connections, phase of the moon and other mysterious influences play a part...run them too fast and the
+// screen will exhibit visual glitches or just not initialize correctly.
+// You may need to use the -b command-line option to set the bitrate.
 static const struct {
-	const int      width;
-	const int      height;
-	const int      bitrate;
-	const uint8_t *init;
-	const uint8_t *win;
+	const int      width;   // Width in pixels
+	const int      height;  // Height in pixels
+	const int      bitrate; // Default stable SPI bitrate
+	const uint8_t *init;    // Pointer to initialization command list
+	const uint8_t *win;     // Pointer to window command list
 } screenInfo[] = {
   { 128, 128, 10000000, initOLED, winOLED },
   { 128, 128, 12000000, initTFT,  winTFT  },
   { 240, 240, 80000000, initIPS,  winIPS  } };
 
+// The concurrent nature of this code plus the eye renderer (which may be performing heavy math) can be taxing, mostly
+// on single-core systems; a balance must be established or one task or the other will suffer (and frame rates with it).
+// Limiting the peak frame rate of this code can be accomplished by selecting a lower SPI bitrate.
+
+// Per-eye structure
 static struct {
-	int        fd;
-	uint16_t  *buf[2];
-	pthread_t  thread;
-	struct spi_ioc_transfer xfer;
+	int        fd;                // SPI file descriptor
+	uint16_t  *buf[2];            // Double-buffered eye data 16 BPP
+	pthread_t  thread;            // Thread ID of eye's spiThreadFunc()
+	struct spi_ioc_transfer xfer; // ioctl() transfer struct
 } eye[2];
 
-static pthread_barrier_t barr;
-static uint8_t           bufIdx = 0;
-static int               bufsiz = 4096;
+static pthread_barrier_t barr;          // For thread synchronization
+static uint8_t           bufIdx = 0;    // Double-buffering index
+static int               bufsiz = 4096; // SPI block xfer size (4K default)
 static struct spi_ioc_transfer xfer = {
-  .rx_buf        = 0,
-  .delay_usecs   = 0,
+  .rx_buf        = 0, // ioctl() transfer structure for issuing
+  .delay_usecs   = 0, // commands (not pixel data) to both screens.
   .bits_per_word = 8,
   .pad           = 0,
   .tx_nbits      = 0,
@@ -201,28 +233,33 @@ static void setRST(int val) {
 	ioctl(gpioFd, GPIO_V2_LINE_SET_VALUES_IOCTL, &v);
 }
 
-#define COMMAND 0
-#define DATA    1
+#define COMMAND 0 // Values for last argument
+#define DATA    1 // to dcX2() function below
 
+// Issue data or command to both SPI displays:
 static void dcX2(uint8_t x, uint8_t dc) {
-	setDC(dc);
-	xfer.tx_buf = (__u64)(uintptr_t)&x;
-	xfer.len    = 1;
+	setDC(dc);                  // DC line selects command vs data frame
+	xfer.tx_buf = (__u64)(uintptr_t)&x; // Uses global xfer struct,
+	xfer.len    = 1;                    // as most elements don't change
 	(void)ioctl(eye[0].fd, SPI_IOC_MESSAGE(1), &xfer);
 	(void)ioctl(eye[1].fd, SPI_IOC_MESSAGE(1), &xfer);
 }
 
+// Issue a packed command list to both displays.  Each entry is:
+//   [cmd_byte] [flag|arg_count] [arg0]...[argN] [opt_delay_ms]
+// The high bit of arg_count is the delay flag; 0xFF delay = 500 ms.
+// A zero cmd_byte terminates the list (EOD).
 static void commandList(const uint8_t *ptr) {
 	int i, j, ms;
-	for(i=0; (j=ptr[i++]);) {
-		dcX2(j, COMMAND);
-		j  = ptr[i++];
-		ms = j & 0x80;
-		j &= ~0x80;
-		while(j--) dcX2(ptr[i++], DATA);
-		if(ms) {
-			ms = ptr[i++];
-			if(ms == 255) ms = 500;
+	for(i = 0; (j = ptr[i++]);) { // 0 = EOD
+		dcX2(j, COMMAND);         // First byte = command
+		j  = ptr[i++];            // Delay flag | num args
+		ms = j & 0x80;            // Mask delay flag
+		j &= ~0x80;               // Mask arg count
+		while(j--) dcX2(ptr[i++], DATA); // Issue args (data)
+		if(ms) {                  // Delay flag set?
+			ms = ptr[i++];    // Next byte = milliseconds
+			if(ms == 255) ms = 500; // If 255, make it 500
 			usleep(ms * 1000);
 		}
 	}
@@ -243,14 +280,23 @@ static void signalHandler(int sig) {
     _exit(0);
 }
 
+// Each eye's SPI transfers are handled by a separate thread, to provide concurrent non-blocking transfers to both
+// displays while the main thread processes the next frame.  Same function is used for both eyes, each in its own
+// thread; eye index is passed in.
 void *spiThreadFunc(void *data) {
-	int      i = *(uint8_t *)data;
+	int      i = *(uint8_t *)data; // Pass in eye index
 	uint32_t bytesThisPass, bytesToGo, screenBytes =
 	  screenInfo[screenType].width * screenInfo[screenType].height * 2;
 
 	for(;;) {
-		pthread_barrier_wait(&barr);
-		pthread_barrier_wait(&barr);
+		// POSIX thread "barriers" are used to sync the main thread with the SPI transfer threads.  This needs to happen
+		// at two points: just after finishing the pixel data transfer, and just before starting the next, so that the
+		// screen-rectangle commands (which fiddle the shared 'DC' pin) don't corrupt the transfer.  Both barrier waits
+		// occur at the *top* of this function to match up with the way the main() loop is entered; it processes a frame
+		// before waiting for prior transfers to finish.
+
+		pthread_barrier_wait(&barr); // This is the 'after' wait
+		pthread_barrier_wait(&barr); // And the 'before' wait
 
 		eye[i].xfer.tx_buf = (__u64)(uintptr_t)eye[i].buf[bufIdx];
 		bytesToGo = screenBytes;
@@ -266,6 +312,7 @@ void *spiThreadFunc(void *data) {
 	return NULL;
 }
 
+// Crude error handler (prints message, exits program with status code)
 static int err(int code, char *string) {
 	(void)puts(string);
 	exit(code);
@@ -279,25 +326,28 @@ int main(int argc, char *argv[]) {
 
 
 	uint8_t showFPS   = 0,
-	        mirror    = 0;
-	int     bitrate   = 0,
-	        winFrames = 1,
+	        mirror    = 0,
+	        rotate    = 0;
+	int     bitrate   = 0, // If 0, use default for screen type
+	        winFrames = 1, // Frames between window resets; periodic reset recovers from SPI pointer drift
 	        i, j, fd;
 
-	while((i = getopt(argc, argv, "otimb:w:s")) != -1) {
+	while((i = getopt(argc, argv, "otirmb:w:s")) != -1) {
 		switch(i) {
-		   case 'o': screenType = SCREEN_OLED;      break;
-		   case 't': screenType = SCREEN_TFT_GREEN;  break;
-		   case 'i': screenType = SCREEN_IPS;        break;
-		   case 'm': mirror    = 1;                  break;
-		   case 'b': bitrate   = strtol(optarg, NULL, 0); break;
-		   case 'w': winFrames = strtol(optarg, NULL, 0); break;
-		   case 's': showFPS   = 1;                  break;
+		   case 'o': screenType = SCREEN_OLED;           break; // Select OLED
+		   case 't': screenType = SCREEN_TFT_GREEN;       break; // Select TFT
+		   case 'i': screenType = SCREEN_IPS;             break; // Select IPS
+		   case 'r': rotate    = 1;                       break; // Rotate 180°
+		   case 'm': mirror    = 1;                       break; // Mirror mode
+		   case 'b': bitrate   = strtol(optarg, NULL, 0); break; // SPI bitrate
+		   case 'w': winFrames = strtol(optarg, NULL, 0); break; // Window sync interval
+		   case 's': showFPS   = 1;                       break; // Show FPS
 		}
 	}
 
 	if(!bitrate) bitrate = screenInfo[screenType].bitrate;
 
+	// Get SPI buffer size from sysfs.  Default is 4K.
 	FILE *fp;
 	if((fp = fopen("/sys/module/spidev/parameters/bufsiz", "r"))) {
 		if(fscanf(fp, "%d", &i) == 1) bufsiz = i;
@@ -356,35 +406,6 @@ int main(int argc, char *argv[]) {
 
 	commandList(screenInfo[screenType].init);
 
-	// STARTUP IMAGE --------------------------------------------------
-	// Display image on screens while waiting for X server to start
-	// {
-	// 	uint32_t screenBytes = screenInfo[screenType].width *
-	// 	                       screenInfo[screenType].height * 2;
-	// 	FILE *f = fopen("/opt/Pi_Eyes/startup.raw", "rb");
-	// 	if(f) {
-	// 		uint8_t *img = malloc(screenBytes);
-	// 		if(img && fread(img, 1, screenBytes, f) == screenBytes) {
-	// 			uint32_t bytesToGo = screenBytes, bytesThisPass;
-	// 			uint8_t *ptr = img;
-	// 			commandList(screenInfo[screenType].win);
-	// 			setDC(1);
-	// 			do {
-	// 				bytesThisPass = bytesToGo;
-	// 				if(bytesThisPass > (uint32_t)bufsiz) bytesThisPass = bufsiz;
-	// 				xfer.tx_buf = (__u64)(uintptr_t)ptr;
-	// 				xfer.len    = bytesThisPass;
-	// 				ioctl(eye[0].fd, SPI_IOC_MESSAGE(1), &xfer);
-	// 				ioctl(eye[1].fd, SPI_IOC_MESSAGE(1), &xfer);
-	// 				ptr       += bytesThisPass;
-	// 				bytesToGo -= bytesThisPass;
-	// 			} while(bytesToGo > 0);
-	// 		}
-	// 		if(img) free(img);
-	// 		fclose(f);
-	// 	}
-	// }
-
 	// X11 CAPTURE INIT ------------------------------------------------
 	// eyes.py renders to X display :0 via xinit.  We connect as a
 	// client and use MIT-SHM to capture frames from the root window
@@ -434,7 +455,7 @@ int main(int argc, char *argv[]) {
 				}
 				dpy = XOpenDisplay(":0");
 				if(dpy) break;
-				usleep(25000); // 0.5 second per frame
+				usleep(25000); // ~25 ms per frame (~40 fps) while waiting for X
 			}
 			free(img);
 		}
@@ -495,7 +516,8 @@ int main(int argc, char *argv[]) {
 	if(!(pixelBuf = (uint16_t *)malloc(width * height * 2)))
 		err(10, "Can't malloc pixelBuf");
 
-	pthread_barrier_init(&barr, NULL, 3);
+	// Initialize SPI transfer threads and synchronization barrier
+	pthread_barrier_init(&barr, NULL, 3); // 3 parties: main + 2 eye threads
 	uint8_t aa = 0, bb = 1;
 	pthread_create(&eye[0].thread, NULL, spiThreadFunc, &aa);
 	pthread_create(&eye[1].thread, NULL, spiThreadFunc, &bb);
@@ -523,52 +545,77 @@ int main(int argc, char *argv[]) {
 			uint32_t p0, p1, p2, p3;
 			int r, g, b;
 			for(j=0; j<height; j++) {
-				for(i=0; i<width; i++) {
+				for(i = 0; i < width; i++) {
 					p0 = src[(j*2)   * fb_width + (i*2)  ];
 					p1 = src[(j*2)   * fb_width + (i*2+1)];
 					p2 = src[(j*2+1) * fb_width + (i*2)  ];
 					p3 = src[(j*2+1) * fb_width + (i*2+1)];
-					r = (((p0>>rShift)&0xFF)+((p1>>rShift)&0xFF)+
-					     ((p2>>rShift)&0xFF)+((p3>>rShift)&0xFF)) >> 2;
-					g = (((p0>>gShift)&0xFF)+((p1>>gShift)&0xFF)+
-					     ((p2>>gShift)&0xFF)+((p3>>gShift)&0xFF)) >> 2;
-					b = (((p0>>bShift)&0xFF)+((p1>>bShift)&0xFF)+
-					     ((p2>>bShift)&0xFF)+((p3>>bShift)&0xFF)) >> 2;
-					pixelBuf[j * width + i] =
-					  ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
+
+					r = (((p0>>rShift)&0xFF) + ((p1>>rShift)&0xFF) + ((p2>>rShift)&0xFF) + ((p3>>rShift)&0xFF)) >> 2;
+					g = (((p0>>gShift)&0xFF) + ((p1>>gShift)&0xFF) + ((p2>>gShift)&0xFF) + ((p3>>gShift)&0xFF)) >> 2;
+					b = (((p0>>bShift)&0xFF) + ((p1>>bShift)&0xFF) + ((p2>>bShift)&0xFF) + ((p3>>bShift)&0xFF)) >> 2;
+
+					pixelBuf[j * width + i] = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
 				}
 			}
 		}
 
-		// Crop eye regions and byte-swap for SPI
+		// Crop eye regions and byte-swap for SPI.
+		// SPI screens expect RGB565 big-endian; the pixelBuf is little-endian
+		// (native x86/ARM), so each pixel must be swapped before transfer.
 		j    = 1 - bufIdx;
 		src0 = &pixelBuf[offset0];
 		src1 = &pixelBuf[offset1];
 		dst0 = eye[0].buf[j];
 		dst1 = eye[1].buf[j];
-		for(j=0; j<h; j++) {
-			for(i=0; i<w; i++) {
-				dst0[i] = __builtin_bswap16(src0[i]);
-				dst1[i] = __builtin_bswap16(src1[i]);
+
+		// 180° rotation: read from bottom-right to top-left
+		if(rotate) {
+			src0 += width * (h - 1);
+			src1 += width * (h - 1);
+			for(j=0; j<h; j++) {
+				for(i=0; i<w; i++) {
+					dst0[i] = __builtin_bswap16(src0[w - 1 - i]);
+					dst1[i] = __builtin_bswap16(src1[w - 1 - i]);
+				}
+				src0 -= width;
+				src1 -= width;
+				dst0 += w;
+				dst1 += w;
 			}
-			src0 += width;
-			src1 += width;
-			dst0 += w;
-			dst1 += w;
+		} else {
+			for(j=0; j<h; j++) {
+				for(i=0; i<w; i++) {
+					dst0[i] = __builtin_bswap16(src0[i]);
+					dst1[i] = __builtin_bswap16(src1[i]);
+				}
+				src0 += width;
+				src1 += width;
+				dst0 += w;
+				dst1 += w;
+			}
 		}
 
+		// Sync up all threads; wait for prior transfers to finish
 		pthread_barrier_wait(&barr);
 
+		// Before pushing data to SPI screens, the pixel 'window' is periodically reset to force screen data pointer
+		// back to (0,0). The pointer automatically 'wraps' when the end of the screen is reached, but a periodic reset
+		// provides extra insurance in case of SPI glitches (which would put one or both screens out of sync for all
+		// subsequent frames). Default behavior is to reset on every frame (performance difference is negligible).
 		if(++winCount >= winFrames) {
 			commandList(screenInfo[screenType].win);
 			setDC(1); // DC high = data
 			winCount = 0;
 		}
 
-		bufIdx = 1 - bufIdx;
-		pthread_barrier_wait(&barr);
+		// With screen commands now issued, sync up the threads again; they'll start pushing data...
+		bufIdx = 1 - bufIdx;         // Swap buffers
+		pthread_barrier_wait(&barr); // Activates data-write threads
 
 		if(showFPS) {
+			// Show approx. frames-per-second once per second. This is the update speed of fbx2 alone and is disengaged
+		    // from the eye-rendering application, which operates at its own unrelated refresh rate.
 			frames++;
 			if((t = time(NULL)) != prevTime) {
 				(void)printf("%d fps\n", frames);

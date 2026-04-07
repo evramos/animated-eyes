@@ -30,10 +30,6 @@ def setup_bindings(listener, quit_event, state, eyes, sequence_player):
         eyes            (Eyes):             Left/right eye objects (for MANUAL seed position).
         sequence_player (SequencePlayer):   Cycled via .cycle() and queried via .current_file.
     """
-    def _when(mode, fn):
-        """Return a callback that only fires when state.control_mode == mode."""
-        return lambda: fn() if state.control_mode == mode else None
-
     # ── Helpers ───────────────────────────────────────────────────────────────
     def _switch_mode(mode):
         if mode == ControlMode.MANUAL:
@@ -47,25 +43,31 @@ def setup_bindings(listener, quit_event, state, eyes, sequence_player):
         else:
             print(f"[mode] → {mode.name}")
 
-    # ── Global — active in every mode ────────────────────────────────────────
-    listener.add_combo(GAMEPAD_QUIT_COMBO, lambda: (
-        print(f"[gamepad] {" + ".join(sorted(GAMEPAD_QUIT_COMBO))} → exiting"),
-        quit_event.set(),
-    ))
+    def _when(mode, fn):
+        """Return a callback that only fires when state.control_mode == mode."""
+        return lambda: fn() if state.control_mode == mode else None
 
+    def bind_held(button, attr, mode=None):
+        press = _when(mode, lambda: setattr(state, attr, True)) if mode else lambda: setattr(state, attr, True)
+        listener.add_on_press  (button, press)
+        listener.add_on_release(button, lambda: setattr(state, attr, False))
+
+    # ── Global — active in every mode ────────────────────────────────────────
+    def _toggle_auto_blink():
+        state.auto_blink = not state.auto_blink
+        print(f"[toggle] auto_blink → {state.auto_blink}")
+
+    def _quit():
+        print(f"[gamepad] {" + ".join(sorted(GAMEPAD_QUIT_COMBO))} → exiting")
+        quit_event.set()
+
+    listener.add_combo(GAMEPAD_QUIT_COMBO, _quit)
     listener.add_combo({BUTTON_B, DPAD_LEFT},  lambda: _switch_mode(ControlMode.RANDOM))
     listener.add_combo({BUTTON_B, DPAD_UP},    lambda: _switch_mode(ControlMode.MANUAL))
     listener.add_combo({BUTTON_B, DPAD_RIGHT}, lambda: _switch_mode(ControlMode.SCRIPTED))
-
-    listener.add_on_press  ("leftShoulder",  lambda: setattr(state, "wink_left",  True))
-    listener.add_on_release("leftShoulder",  lambda: setattr(state, "wink_left",  False))
-    listener.add_on_press  ("rightShoulder", lambda: setattr(state, "wink_right", True))
-    listener.add_on_release("rightShoulder", lambda: setattr(state, "wink_right", False))
-
-    listener.add_on_press(BUTTON_OPTIONS, lambda: (
-        setattr(state, "auto_blink", not state.auto_blink),
-        print(f"[toggle] auto_blink → {state.auto_blink}"),
-    ))
+    listener.add_on_press(BUTTON_OPTIONS, _toggle_auto_blink)
+    bind_held(LEFT_SHOULDER,  "wink_left")
+    bind_held(RIGHT_SHOULDER, "wink_right")
 
     # ── RANDOM — crazy eyes toggle ────────────────────────────────────────────
     def _toggle_crazy_eyes():
@@ -79,21 +81,13 @@ def setup_bindings(listener, quit_event, state, eyes, sequence_player):
     listener.add_on_press(BUTTON_A, _when(ControlMode.SCRIPTED, lambda: sequence_player.cycle(+1)))
 
     # ── MANUAL — lid adjustment modifier (Y = right eye, A = left eye) ────────
-    listener.add_on_press  (BUTTON_Y, _when(ControlMode.MANUAL, lambda: setattr(state, "button_y_held", True)))
-    listener.add_on_release(BUTTON_Y,                           lambda: setattr(state, "button_y_held", False))
-    listener.add_on_press  (BUTTON_A, _when(ControlMode.MANUAL, lambda: setattr(state, "button_a_held", True)))
-    listener.add_on_release(BUTTON_A,                           lambda: setattr(state, "button_a_held", False))
+    bind_held(BUTTON_Y, "button_y_held", ControlMode.MANUAL)
+    bind_held(BUTTON_A, "button_a_held", ControlMode.MANUAL)
 
-    listener.add_on_press  (DPAD_LEFT,  _when(ControlMode.MANUAL, lambda: setattr(state, "dpad_left",  True)))
-    listener.add_on_release(DPAD_LEFT,                            lambda: setattr(state, "dpad_left",  False))
-    listener.add_on_press  (DPAD_RIGHT, _when(ControlMode.MANUAL, lambda: setattr(state, "dpad_right", True)))
-    listener.add_on_release(DPAD_RIGHT,                           lambda: setattr(state, "dpad_right", False))
-    listener.add_on_press  (DPAD_UP,    _when(ControlMode.MANUAL, lambda: setattr(state, "dpad_up",    True)))
-    listener.add_on_release(DPAD_UP,                              lambda: setattr(state, "dpad_up",    False))
-    listener.add_on_press  (DPAD_DOWN,  _when(ControlMode.MANUAL, lambda: setattr(state, "dpad_down",  True)))
-    listener.add_on_release(DPAD_DOWN,                            lambda: setattr(state, "dpad_down",  False))
+    bind_held(DPAD_LEFT,  "dpad_left",  ControlMode.MANUAL)
+    bind_held(DPAD_RIGHT, "dpad_right", ControlMode.MANUAL)
+    bind_held(DPAD_UP,    "dpad_up",    ControlMode.MANUAL)
+    bind_held(DPAD_DOWN,  "dpad_down",  ControlMode.MANUAL)
 
-    listener.add_on_press  ("leftTrigger",  _when(ControlMode.MANUAL, lambda: setattr(state, "trigger_left",  True)))
-    listener.add_on_release("leftTrigger",                             lambda: setattr(state, "trigger_left",  False))
-    listener.add_on_press  ("rightTrigger", _when(ControlMode.MANUAL, lambda: setattr(state, "trigger_right", True)))
-    listener.add_on_release("rightTrigger",                            lambda: setattr(state, "trigger_right", False))
+    bind_held(LEFT_TRIGGER,  "trigger_left",  ControlMode.MANUAL)
+    bind_held(RIGHT_TRIGGER, "trigger_right", ControlMode.MANUAL)

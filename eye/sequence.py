@@ -1,5 +1,6 @@
 import glob
 import json
+import os
 
 from constants import AUTO_BLINK, EYELID_TRACKING, KEYFRAME_STEP
 from models.point import Point, smoothstep
@@ -31,13 +32,13 @@ class SequencePlayer:
         self.load(path)
         self._files      = sorted(glob.glob("keyframes/*.json"))
         self._file_index = self._files.index(path) if path in self._files else 0
-        print(f"[seq] {len(self._files)} keyframe files: {[f.split('/')[-1] for f in self._files]}")
+        print(f"[seq] {len(self._files)} keyframe files: {[os.path.basename(f) for f in self._files]}")
         print(f"[seq] active: {self.current_file or 'none'}")
 
     @property
     def current_file(self):
         """Basename of the active keyframe file, or None if no files found."""
-        return self._files[self._file_index].split('/')[-1] if self._files else None
+        return os.path.basename(self._files[self._file_index]) if self._files else None
 
     def cycle(self, delta):
         """Advance to the next/previous keyframe file by delta steps and reload."""

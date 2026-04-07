@@ -77,13 +77,6 @@ class SnakeEyesBonnet(Thread):
        four channels of analog input with clipping and filtering, with
        output ranging from 0.0 to 1.0 (rather than specific voltages or
        integer units)."""
-    channel_dict = {
-       0: ADS.P0,
-       1: ADS.P1,
-       2: ADS.P2,
-       3: ADS.P3
-    }
-
     def __init__(self, daemon, *args, **kwargs):
         """SnakeEyesBonnet constructor."""
         super(SnakeEyesBonnet, self).__init__(daemon=daemon) # Thread
@@ -92,10 +85,10 @@ class SnakeEyesBonnet(Thread):
         self.ads.gain = 1
         self.period = 1.0 / 60.0  # Polling inverval = 1/60 sec default
         self.print_values = False # Don't print values by default
+        channel_pins = [ADS.P0, ADS.P1, ADS.P2, ADS.P3]
         self.channel = []
-        for index in range(4):
-            self.channel.append(AdcChannel(
-                                AnalogIn(self.ads, self.channel_dict[index])))
+        for pin in channel_pins:
+            self.channel.append(AdcChannel(AnalogIn(self.ads, pin)))
 
     def setup_channel(self, channel, **kwargs):
         """Configure one ADC channel of the Snake Eyes Bonnet. Pass channel

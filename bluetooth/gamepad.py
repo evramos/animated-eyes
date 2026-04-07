@@ -75,12 +75,24 @@ class GamepadListener:
         self._held.discard(name)
         for cb in self._release_cbs.get(name, []):
             cb()
-        self._combo_active = {c for c in self._combo_active if name not in c}
+        if self._combo_active:
+            self._combo_active = {c for c in self._combo_active if name not in c}
 
     def _reset(self):
         """Release all held buttons (called on disconnect)."""
         for name in list(self._held):
             self._on_release(name)
+
+    def _dpad_axis(self, value, neg, pos, mapping):
+        self._on_release(neg)
+        self._on_release(pos)
+        if mapping is not None:
+            if value in mapping:
+                self._on_press(mapping[value])
+        else:
+            btn = neg if value < 64 else pos if value > 192 else None
+            if btn:
+                self._on_press(btn)
 
     # ── macOS — GCController via PyObjC ───────────────────────────────────────
 
@@ -170,6 +182,13 @@ class GamepadListener:
             if hasattr(evdev.ecodes, ev_name)
         }
 
+        abs_axes = {
+            evdev.ecodes.ABS_HAT0X: (DPAD_LEFT, DPAD_RIGHT, DPAD_X),
+            evdev.ecodes.ABS_HAT0Y: (DPAD_UP,   DPAD_DOWN,  DPAD_Y),
+            evdev.ecodes.ABS_X:     (DPAD_LEFT, DPAD_RIGHT, None),
+            evdev.ecodes.ABS_Y:     (DPAD_UP,   DPAD_DOWN,  None),
+        }
+
         print(f"[gamepad] waiting for controller...  quit combo: {" + ".join(sorted(GAMEPAD_QUIT_COMBO))}")
 
         while not self._quit.is_set():
@@ -185,11 +204,6 @@ class GamepadListener:
                 continue
 
             print(f"[gamepad] connected: {gamepad.name}")
-            # caps = gamepad.capabilities(verbose=True)
-            # btn_names = [name for name, _ in caps.get(("EV_KEY", evdev.ecodes.EV_KEY), [])]
-            # abs_names = [name for name, _ in caps.get(("EV_ABS", evdev.ecodes.EV_ABS), [])]
-            # print(f"[gamepad] buttons: {btn_names}", flush=True)
-            # print(f"[gamepad] axes:    {abs_names}", flush=True)
 
             try:
                 for event in gamepad.read_loop():
@@ -205,26 +219,8 @@ class GamepadListener:
                                 self._on_release(name)
 
                     elif event.type == evdev.ecodes.EV_ABS:
-                        if event.code == evdev.ecodes.ABS_HAT0X:
-                            self._on_release(DPAD_LEFT)
-                            self._on_release(DPAD_RIGHT)
-                            if event.value in DPAD_X:
-                                self._on_press(DPAD_X[event.value])
-                        elif event.code == evdev.ecodes.ABS_HAT0Y:
-                            self._on_release(DPAD_UP)
-                            self._on_release(DPAD_DOWN)
-                            if event.value in DPAD_Y:
-                                self._on_press(DPAD_Y[event.value])
-                        elif event.code == evdev.ecodes.ABS_X:
-                            self._on_release(DPAD_LEFT)
-                            self._on_release(DPAD_RIGHT)
-                            if btn := DPAD_LEFT if event.value < 64 else DPAD_RIGHT if event.value > 192 else None:
-                                self._on_press(btn)
-                        elif event.code == evdev.ecodes.ABS_Y:
-                            self._on_release(DPAD_UP)
-                            self._on_release(DPAD_DOWN)
-                            if btn := DPAD_UP if event.value < 64 else DPAD_DOWN if event.value > 192 else None:
-                                self._on_press(btn)
+                        if entry := abs_axes.get(event.code):
+                            self._dpad_axis(event.value, *entry)
 
             except OSError:
                 print("[gamepad] disconnected — waiting to reconnect...")

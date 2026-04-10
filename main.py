@@ -150,9 +150,9 @@ def main():
             frame_start = time.monotonic()
 
             if state.control_mode == ControlMode.MANUAL:
-                if state.trigger_right:
+                if state.controller_input.trigger_right:
                     state.manual_pupil = max(PUPIL_MIN, state.manual_pupil - 1.0 / TARGET_FPS)
-                elif state.trigger_left:
+                elif state.controller_input.trigger_left:
                     state.manual_pupil = min(PUPIL_MAX, state.manual_pupil + 1.0 / TARGET_FPS)
                 pupil_value = state.manual_pupil
             else:

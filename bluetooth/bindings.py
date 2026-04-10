@@ -48,9 +48,10 @@ def setup_bindings(listener, quit_event, state, eyes, sequence_player):
         return lambda: fn() if state.control_mode == mode else None
 
     def bind_held(button, attr, mode=None):
-        press = _when(mode, lambda: setattr(state, attr, True)) if mode else lambda: setattr(state, attr, True)
+        _input = state.controller_input
+        press = _when(mode, lambda: setattr(_input, attr, True)) if mode else lambda: setattr(_input, attr, True)
         listener.add_on_press  (button, press)
-        listener.add_on_release(button, lambda: setattr(state, attr, False))
+        listener.add_on_release(button, lambda: setattr(_input, attr, False))
 
     # ── Global — active in every mode ────────────────────────────────────────
     def _toggle_auto_blink():

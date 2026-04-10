@@ -1,5 +1,8 @@
 from typing import Final
 
+AXIS_SPEED:     Final = 60.0  # degrees/sec while d-pad held
+AXIS_SPRING:    Final = 60.0  # degrees/sec return to center when released
+
 BUTTON_A:       Final = "buttonA"
 BUTTON_B:       Final = "buttonB"
 BUTTON_X:       Final = "buttonX"

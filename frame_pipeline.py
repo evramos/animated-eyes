@@ -20,11 +20,28 @@ from typing import Protocol
 
 import RPi.GPIO as GPIO
 
+from bluetooth.constants import AXIS_SPEED, AXIS_SPRING
 from constants import *
+from eye import SequencePlayer, Eyes, Eye
 from gfxutil import points_interp, points_mesh
+from models import HardwareContext
 
-_blend_lid = lambda t, n: t + n * (1.0 - t)   # blend tracking pos with blink weight
-_adc_to_angle = lambda ch: -30.0 + ch.value * 60.0
+
+@dataclass
+class InputState:
+    """Raw button/axis signals written by the gamepad thread."""
+    wink_left:     bool = False
+    wink_right:    bool = False
+    dpad_left:     bool = False
+    dpad_right:    bool = False
+    dpad_up:       bool = False
+    dpad_down:     bool = False
+    button_a_held: bool = False
+    button_y_held: bool = False
+    trigger_left:  bool = False
+    trigger_right: bool = False
+    step_key_held: bool = False # edge detection for KEYFRAME_STEP space press
+
 
 # ── Shared frame state ─────────────────────────────────────────────────────────
 
@@ -36,23 +53,13 @@ class FrameState:
     prev_pupil_scale:   float       = -1.0   # forces iris regen on first frame
     time_of_last_blink: float       = 0.0
     time_to_next_blink: float       = 1.0
-    step_key_held:      bool        = False  # edge detection for KEYFRAME_STEP space press
     control_mode:       ControlMode = CONTROL_MODE
-    wink_left:          bool        = False
-    wink_right:         bool        = False
-    dpad_left:          bool        = False
-    dpad_right:         bool        = False
-    dpad_up:            bool        = False
-    dpad_down:          bool        = False
-    button_a_held:      bool        = False
-    button_y_held:      bool        = False
+    controller_input:   InputState  = field(default_factory=InputState)
     manual_x:           float       = 0.0   # current eye angle in MANUAL mode
     manual_y:           float       = 0.0
     manual_last_time:   float       = 0.0
     current_pupil:      float       = PUPIL_SCALE
     manual_pupil:       float       = PUPIL_SCALE
-    trigger_left:       bool        = False
-    trigger_right:      bool        = False
     auto_blink:         bool        = AUTO_BLINK
     crazy_eyes:         bool        = CRAZY_EYES
 
@@ -74,10 +81,42 @@ class LidChannels:
     right_upper: _HasValue
     right_lower: _HasValue
 
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+def _blend_lid(t, n): # blend tracking pos with blink weight
+    return t + n * (1.0 - t)
+
+
+def _adc_to_angle(ch):
+    return -30.0 + ch.value * 60.0
+
+
+def _adjust_lid_tracking(eye: Eye, pad_input: InputState, step: float) -> None:
+    if pad_input.dpad_up:
+        eye.upper_tracking_pos = max(0.0, eye.upper_tracking_pos - step)
+    elif pad_input.dpad_down:
+        eye.upper_tracking_pos = min(1.0, eye.upper_tracking_pos + step)
+    if pad_input.dpad_left:
+        eye.lower_tracking_pos = max(0.0, eye.lower_tracking_pos - step)
+    elif pad_input.dpad_right:
+        eye.lower_tracking_pos = min(1.0, eye.lower_tracking_pos + step)
+
+
+def _apply_axis(value: float, neg_held, pos_held, lid_mod, dt) -> float:
+    if not lid_mod and neg_held:
+        return max(-30.0, value - AXIS_SPEED * dt)
+    elif not lid_mod and pos_held:
+        return min( 30.0, value + AXIS_SPEED * dt)
+    elif value > 0:
+        return max(0.0, value - AXIS_SPRING * dt)
+    elif value < 0:
+        return min(0.0, value + AXIS_SPRING * dt)
+    return value
 
 # ── Pipeline stages ────────────────────────────────────────────────────────────
 
-def update_eye_positions(now, eyes, hw, state, sequence_player=None):
+def update_eye_positions(now: float, eyes: Eyes, hw: HardwareContext, state: FrameState,
+                         sequence_player: SequencePlayer=None):
     """Advance left (and optionally right) eye position for this frame.
 
     The active CONTROL_MODE determines the source:
@@ -86,10 +125,11 @@ def update_eye_positions(now, eyes, hw, state, sequence_player=None):
         RANDOM   — autonomous saccade state machine
 
     Args:
-        now             (float):         Current timestamp in seconds.
-        eyes            (Eyes):           Left & Right eye instance.
+        now             (float):           Current timestamp in seconds.
+        eyes            (Eyes):            Left & Right eye instance.
         hw              (HardwareContext): Bonnet ADC accessor.
-        sequence_player (SequencePlayer): Required when CONTROL_MODE is SCRIPTED.
+        state           (FrameState):      Holds manual joystick state; updated in MANUAL mode.
+        sequence_player (SequencePlayer):  Required when CONTROL_MODE is SCRIPTED.
     """
     match state.control_mode:
         case ControlMode.MANUAL:
@@ -97,30 +137,14 @@ def update_eye_positions(now, eyes, hw, state, sequence_player=None):
                 eyes.left.current.x = _adc_to_angle(hw.bonnet.channel[JOYSTICK_X_IN])
                 eyes.left.current.y = _adc_to_angle(hw.bonnet.channel[JOYSTICK_Y_IN])
             else:
-                _SPEED  = 60.0  # degrees/sec while d-pad held
-                _SPRING = 60.0  # degrees/sec return to center when released
                 dt = min(now - state.manual_last_time, 0.05) if state.manual_last_time else 0.0
                 state.manual_last_time = now
 
-                _lid_mod = state.button_a_held or state.button_y_held
+                _input = state.controller_input
+                _lid_mod = _input.button_a_held or _input.button_y_held
 
-                if not _lid_mod and state.dpad_left:
-                    state.manual_x = max(-30.0, state.manual_x - _SPEED * dt)
-                elif not _lid_mod and state.dpad_right:
-                    state.manual_x = min( 30.0, state.manual_x + _SPEED * dt)
-                elif state.manual_x > 0:
-                    state.manual_x = max(0.0, state.manual_x - _SPRING * dt)
-                elif state.manual_x < 0:
-                    state.manual_x = min(0.0, state.manual_x + _SPRING * dt)
-
-                if not _lid_mod and state.dpad_up:
-                    state.manual_y = min( 30.0, state.manual_y + _SPEED * dt)
-                elif not _lid_mod and state.dpad_down:
-                    state.manual_y = max(-30.0, state.manual_y - _SPEED * dt)
-                elif state.manual_y > 0:
-                    state.manual_y = max(0.0, state.manual_y - _SPRING * dt)
-                elif state.manual_y < 0:
-                    state.manual_y = min(0.0, state.manual_y + _SPRING * dt)
+                state.manual_x = _apply_axis(state.manual_x, _input.dpad_left, _input.dpad_right, _lid_mod, dt)
+                state.manual_y = _apply_axis(state.manual_y, _input.dpad_down, _input.dpad_up, _lid_mod, dt)
 
                 eyes.left.current.x = state.manual_x
                 eyes.left.current.y = state.manual_y
@@ -186,8 +210,8 @@ def update_blinks(now, eyes, state, sequence_player=None):
         if eyes.right.blink_state == NO_BLINK: eyes.right.start_blink(now, duration)
         state.time_to_next_blink = duration * 3 + random.uniform(0.0, 4.0)
 
-    eyes.left.update_blink(WINK_L_PIN,  now, wink_held=state.wink_left)
-    eyes.right.update_blink(WINK_R_PIN, now, wink_held=state.wink_right)
+    eyes.left.update_blink(WINK_L_PIN,  now, wink_held=state.controller_input.wink_left)
+    eyes.right.update_blink(WINK_R_PIN, now, wink_held=state.controller_input.wink_right)
 
     if BLINK_PIN >= 0 and not KEYFRAME_STEP and GPIO.input(BLINK_PIN) == GPIO.LOW:
         duration = random.uniform(0.035, 0.06)
@@ -218,25 +242,12 @@ def update_lid_tracking(eyes, lid_channels, state, sequence_player=None):
     # If EYELID_TRACKING is True, fall through so tracking resumes when buttons are released.
     if state.control_mode == ControlMode.MANUAL:
         _STEP = 0.5 / TARGET_FPS
-        if state.button_y_held:
-            if state.dpad_up:
-                eyes.right.upper_tracking_pos = max(0.0, eyes.right.upper_tracking_pos - _STEP)
-            elif state.dpad_down:
-                eyes.right.upper_tracking_pos = min(1.0, eyes.right.upper_tracking_pos + _STEP)
-            if state.dpad_left:
-                eyes.right.lower_tracking_pos = max(0.0, eyes.right.lower_tracking_pos - _STEP)
-            elif state.dpad_right:
-                eyes.right.lower_tracking_pos = min(1.0, eyes.right.lower_tracking_pos + _STEP)
-        if state.button_a_held:
-            if state.dpad_up:
-                eyes.left.upper_tracking_pos = max(0.0, eyes.left.upper_tracking_pos - _STEP)
-            elif state.dpad_down:
-                eyes.left.upper_tracking_pos = min(1.0, eyes.left.upper_tracking_pos + _STEP)
-            if state.dpad_left:
-                eyes.left.lower_tracking_pos = max(0.0, eyes.left.lower_tracking_pos - _STEP)
-            elif state.dpad_right:
-                eyes.left.lower_tracking_pos = min(1.0, eyes.left.lower_tracking_pos + _STEP)
-        if (state.button_y_held or state.button_a_held) or not EYELID_TRACKING:
+        con_inp = state.controller_input
+        if con_inp.button_y_held:
+            _adjust_lid_tracking(eyes.right, con_inp, _STEP)
+        if con_inp.button_a_held:
+            _adjust_lid_tracking(eyes.left, con_inp, _STEP)
+        if (con_inp.button_y_held or con_inp.button_a_held) or not EYELID_TRACKING:
             return
 
     right_independent = state.crazy_eyes or not MIRROR_LIDS

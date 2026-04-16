@@ -22,8 +22,22 @@ if platform.system() == "Darwin":
             _main_rl.runUntilDate_(_ns_date(0))
     except ImportError:
         def _pump_runloop(): pass
+    #
+    # def _poll_keyboard_dpad(state):
+    #     """Map arrow keys → dpad flags for manual eye movement (macOS dev only)."""
+    #     try:
+    #         import sdl2
+    #         keys = sdl2.SDL_GetKeyboardState(None)
+    #         inp = state.controller_input
+    #         inp.dpad_left  = bool(keys[sdl2.SDL_SCANCODE_LEFT])
+    #         inp.dpad_right = bool(keys[sdl2.SDL_SCANCODE_RIGHT])
+    #         inp.dpad_up    = bool(keys[sdl2.SDL_SCANCODE_UP])
+    #         inp.dpad_down  = bool(keys[sdl2.SDL_SCANCODE_DOWN])
+    #     except Exception:
+    #         pass
 else:
     def _pump_runloop(): pass
+    # def _poll_keyboard_dpad(state): pass
 
 from constants import (
     DEBUG_MOVEMENT, TARGET_FPS, SEQUENCE_FILE, PUPIL_MIN, PUPIL_MAX, PUPIL_SMOOTH, PUPIL_IN, ControlMode)
@@ -31,7 +45,7 @@ from debug_overlay import DebugOverlay
 from bluetooth import start_gamepad
 from eye import Eyes, SequencePlayer
 from frame_pipeline import (FrameState, LidChannels, draw_scene, update_eye_positions,
-                            update_iris, update_blinks, update_lid_tracking, update_lids)
+                            update_iris, update_eye_set, update_blinks, update_lid_tracking, update_lids)
 from init import init_gpio, init_adc, init_svg, init_display, init_scene
 
 # ── Init ───────────────────────────────────────────────────────────────────────
@@ -85,8 +99,10 @@ def frame(pupil_scale):
         state.beginning_time = now
 
     _pump_runloop()
+    # _poll_keyboard_dpad(state)
     update_eye_positions(now, eyes, hw, state, sequence_player)
     update_iris(pupil_scale, state, scene, svg)
+    update_eye_set(now, state, scene)
     update_blinks(now, eyes, state, sequence_player)
     update_lid_tracking(eyes, lid_channels, state, sequence_player)
     update_lids(now, left,  scene.left,  svg, scene, False)

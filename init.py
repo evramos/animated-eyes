@@ -11,6 +11,7 @@ from eye import EyeLidMesh
 from snake_eyes_bonnet import SnakeEyesBonnet
 from constants import WINK_L_PIN, BLINK_PIN, WINK_R_PIN, JOYSTICK_X_IN, JOYSTICK_Y_IN, PUPIL_IN
 from models import LidPoints, EyeMeshes, SvgPoints, SceneContext, HardwareContext, DisplayContext
+from eye_sets.base import EyeSetInitializer
 
 def init_gpio():
     """
@@ -135,9 +136,9 @@ def _lid_regen_threshold(open_pts, closed_pts):
 def init_scene(svg: SvgPoints, ctx: DisplayContext) -> SceneContext:
 
     # Load texture maps --------------------------------------------------------
-    iris_map = pi3d.Texture("graphics/dragon-iris-color.png", mipmap=False, filter=pi3d.constants.GL_LINEAR)
+    iris_map   = pi3d.Texture("graphics/dragon-iris-color.png", mipmap=False, filter=pi3d.constants.GL_LINEAR)
     sclera_map = pi3d.Texture("graphics/dragon-sclera.png", mipmap=False, filter=pi3d.constants.GL_LINEAR, blend=True)
-    lid_map = pi3d.Texture("graphics/lid.png", mipmap=False, filter=pi3d.constants.GL_LINEAR, blend=True)
+    lid_map    = pi3d.Texture("graphics/lid.png", mipmap=False, filter=pi3d.constants.GL_LINEAR, blend=True)
 
     # U/V map may be useful for debugging texture placement; not normally used
     uv_map = pi3d.Texture("graphics/uv.png", mipmap=False, filter=pi3d.constants.GL_LINEAR, blend=False, m_repeat=True)
@@ -218,9 +219,15 @@ def init_scene(svg: SvgPoints, ctx: DisplayContext) -> SceneContext:
     right_sclera.set_shader(ctx.shader)
     re_axis(right_sclera, 0.5)  # Image map offset = 180 degree rotation
 
+    # ── EyeSet registry — each initializer owns its own mesh factory and driver ──
+    eye_set_registry = {}
+    for _init in EyeSetInitializer.all():
+        eye_set_registry.update(_init.register(ctx, svg))
+
     return SceneContext(
-        left=EyeMeshes(iris=left_iris,sclera=left_sclera, lids=left_lids),
+        left=EyeMeshes(iris=left_iris, sclera=left_sclera, lids=left_lids),
         right=EyeMeshes(iris=right_iris, sclera=right_sclera, lids=right_lids),
         iris_z=iris_z_angle, iris_regen_threshold=iris_regen_threshold,
-        upper_lid_regen_threshold=upper_lid_regen_threshold, lower_lid_regen_threshold=lower_lid_regen_threshold
+        upper_lid_regen_threshold=upper_lid_regen_threshold, lower_lid_regen_threshold=lower_lid_regen_threshold,
+        eye_set_registry=eye_set_registry,
     )

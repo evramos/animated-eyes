@@ -1,50 +1,70 @@
 from enum import Enum, auto
+from typing import Final
 
-DEBUG_MOVEMENT  = False
-KEYFRAME_STEP   = False  # Space bar steps one keyframe at a time (SCRIPTED mode only)
+# Defines all constants and configuration options for the eye control system.
+DEBUG_MOVEMENT:  Final = False
+KEYFRAME_STEP:   Final = False  # Space bar steps one keyframe at a time (SCRIPTED mode only)
 
-# Eye motion configuration
-TARGET_FPS      = 60
-AUTO_BLINK      = True  # Eyes blink autonomously
-CRAZY_EYES      = False # Each eye moves in different directions
-MIRROR_LIDS     = True  # Right eye lid controls mirror left; False = independent (channels 3 & 4)
-EYELID_TRACKING = True  # Eyelid tracks pupil
-ROTATE_EYES     = False # Set True when running on hardware
-ROTATE_DEGREES  = 180   # Screen rotation in degrees
+# ── Eye Motion Configuration ──────────────────────────────────────────────────────────────────────────────────────────
+TARGET_FPS:      Final = 60
+AUTO_BLINK:      Final = True  # Eyes blink autonomously
+CRAZY_EYES:      Final = False # Each eye moves in different directions
+MIRROR_LIDS:     Final = True  # Right eyelid controls mirror left; False = independent (channels 3 & 4)
+EYELID_TRACKING: Final = True  # Eyelid tracks pupil
+ROTATE_EYES:     Final = False # Set True when running on hardware
+ROTATE_DEGREES:  Final = 180   # Screen rotation in degrees
 
-# Analog input configuration (requires Snake Eyes Bonnet)
-PUPIL_IN        = -1    # Pupil control (-1 = auto)
-JOYSTICK_X_IN   = -1     # Eye horizontal position (-1 = auto)
-JOYSTICK_Y_IN   = -1     # Eye vertical position (-1 = auto)
-PUPIL_SMOOTH    = 16    # Filter input from PUPIL_IN if > 0
+# ── Analog Input Configuration (Requires Snake Eyes Bonnet) ───────────────────────────────────────────────────────────
+PUPIL_IN:        Final = -1    # Pupil control (-1 = auto)
+JOYSTICK_X_IN:   Final = -1     # Eye horizontal position (-1 = auto)
+JOYSTICK_Y_IN:   Final = -1     # Eye vertical position (-1 = auto)
+PUPIL_SMOOTH:    Final = 16    # Filter input from PUPIL_IN if > 0
 
-# GPIO pin assignments
-WINK_L_PIN      = 22    # Left eye wink button
-BLINK_PIN       = 23    # Blink button (both eyes)
-WINK_R_PIN      = 24    # Right eye wink button
+# ── GPIO Pin Assignments ──────────────────────────────────────────────────────────────────────────────────────────────
+WINK_L_PIN:      Final = 22    # Left eye wink button
+BLINK_PIN:       Final = 23    # Blink button (both eyes)
+WINK_R_PIN:      Final = 24    # Right eye wink button
 
-# Control modes
+# ── Control Modes ─────────────────────────────────────────────────────────────────────────────────────────────────────
 class ControlMode(Enum):
-    RANDOM     = auto() # 1
-    MANUAL     = auto() # 2
-    SCRIPTED   = auto() # 3
+    RANDOM     = auto() # Eyes will look around randomly
+    MANUAL     = auto() # Eyes are controlled manually via gamepad
+    SCRIPTED   = auto() # Eyes follow keyframe sequence from SEQUENCE_FILE
+    TRACKING   = auto() # Eyes will be controlled by tracking input (e.g. eye tracking or external sensors)
 
-CONTROL_MODE = ControlMode.RANDOM
+CONTROL_MODE:   Final = ControlMode.RANDOM
 
+# ── Eye Sets ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+class EyeSet(Enum):
+    NORMAL   = auto()   # existing dragon iris texture
+    HYPNO    = auto()   # live-generated spiral texture
+    RINGS    = auto()   # live-generated concentric texture
+    GLITCH   = auto()   # glitch effect
+
+EYE_SET:         Final = EyeSet.NORMAL
+EYE_SET_PRESETS: Final = False # True → cycle presets via gamepad; False → use default config
+
+# ── Expression Sequence File ──────────────────────────────────────────────────────────────────────────────────────────
 # TODO - There will be more expressions later that would be selected by end-user
-# Expression sequence file
-SEQUENCE_FILE = "keyframes/sample1.json"
+SEQUENCE_FILE:   Final = "keyframes/sample1.json"
 
-# Pupil and convergence settings
-PUPIL_SCALE     = 0.5
-PUPIL_MIN       = 0.0   # Lower analog range from PUPIL_IN
-PUPIL_MAX       = 1.0   # Upper "
-CONVERGENCE     = 2.0  # 0.0 = no convergence, 1.0 = full, >1.0 = over-convergence
+# ── Tracking Mode ─────────────────────────────────────────────────────────────────────────────────────────────────────
+class TrackingMode(Enum):
+    EYES   = auto()  # Use tracking eyes data for eye movement
+    GYRO   = auto()  # Use gyroscope data for eye movement
 
-# Blink states
-NO_BLINK        = 0
-EN_BLINKING     = 1
-DE_BLINKING     = 2
+TRACKING_MODE:   Final = TrackingMode.EYES
+
+# ── Pupil & Convergence Settings ──────────────────────────────────────────────────────────────────────────────────────
+PUPIL_SCALE:     Final = 0.5
+PUPIL_MIN:       Final = 0.0   # Lower analog range from PUPIL_IN
+PUPIL_MAX:       Final = 1.0   # Upper "
+CONVERGENCE:     Final = 2.0  # 0.0 = no convergence, 1.0 = full, >1.0 = over-convergence
+
+# ── Blink States ──────────────────────────────────────────────────────────────────────────────────────────────────────
+NO_BLINK:        Final = 0
+EN_BLINKING:     Final = 1
+DE_BLINKING:     Final = 2
 
 # TODO: Replace with cleaner Blink IntEnum if needed
 # class Blink(IntEnum):

@@ -8,7 +8,7 @@ wrapped with _when() so they silently no-op when the active mode doesn't match.
 Call setup_bindings() after constructing the listener, before start().
 """
 from bluetooth.constants import *
-from constants import ControlMode
+from constants import ControlMode, EyeSet
 
 
 def start_gamepad(quit_event, state, eyes, sequence_player):
@@ -69,6 +69,27 @@ def setup_bindings(listener, quit_event, state, eyes, sequence_player):
     listener.add_on_press(BUTTON_OPTIONS, _toggle_auto_blink)
     bind_held(LEFT_SHOULDER,  "wink_left")
     bind_held(RIGHT_SHOULDER, "wink_right")
+
+    # ── Eye set — active in every mode ───────────────────────────────────────
+
+    def _switch_eye_set(eye_set):
+        state.eye_set = eye_set
+        print(f"[eye_set] → {state.eye_set.name}")
+
+    listener.add_combo({BUTTON_X, DPAD_UP},    lambda: _switch_eye_set(EyeSet.NORMAL))
+    listener.add_combo({BUTTON_X, DPAD_LEFT},  lambda: _switch_eye_set(EyeSet.HYPNO))
+    listener.add_combo({BUTTON_X, DPAD_RIGHT}, lambda: _switch_eye_set(EyeSet.RINGS))
+
+    def _next_preset():
+        state.preset_index += 1
+        print(f"[preset] → {state.preset_index}")
+
+    def _prev_preset():
+        state.preset_index -= 1
+        print(f"[preset] → {state.preset_index}")
+
+    listener.add_combo({BUTTON_X, RIGHT_SHOULDER},  _next_preset)
+    listener.add_combo({BUTTON_X, RIGHT_TRIGGER},   _prev_preset)
 
     # ── RANDOM — crazy eyes toggle ────────────────────────────────────────────
     def _toggle_crazy_eyes():

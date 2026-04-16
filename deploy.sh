@@ -115,8 +115,10 @@ if dir_diff; then
     rsync -avzO --no-perms --progress "${RSYNC_EXCLUDES[@]}" "${SCRIPT_DIR}/" "${REMOTE}:${REMOTE_DIR}/"
     echo "✓ Done — ${REMOTE}:${REMOTE_DIR}"
 
-    for _c in "${CHANGED_C_FILES[@]}"; do
-        [[ -n "$_c" ]] && compile_c "${_c}"
-    done
-    unset _c
+    if [[ ${#CHANGED_C_FILES[@]} -gt 0 ]]; then
+        for _c in "${CHANGED_C_FILES[@]}"; do
+            compile_c "${_c}"
+        done
+        unset _c
+    fi
 fi

@@ -216,6 +216,100 @@ static struct spi_ioc_transfer xfer = {
 // GPIO state — uses Linux GPIO character device, works on Pi 3B, 4 and 5
 static int gpioFd = -1; // fd from GPIO_V2_GET_LINE_IOCTL
 
+// ── OLED color correction LUTs ────────────────────────────────────────────────
+// Applied in the XRGB8888 → RGB565 conversion loop before bit-packing.
+// On non-OLED screens all three are identity tables (no effect).
+//
+// The SSD1351's B8h gamma table is approximately sRGB-compatible (~γ 2.2),
+// so gamma itself is not the main issue. The dominant mismatch is the C1
+// contrast register: R=0xFF, G=0xA3 (163), B=0xFF. Green hardware output
+// sits at 163/255 = 63.9% of R/B, causing a visible magenta/red cast.
+//
+// Fix: pre-boost green by 255/163 so after hardware attenuation it matches
+// R/B. R and B are left as identity — they are already in balance.
+//
+// Tuning: adjust GREEN_BOOST_NUM / GREEN_BOOST_DEN to taste on hardware.
+// 255/163 fully compensates C1; lower numerator = gentler correction.
+#define GREEN_BOOST_NUM 255
+#define GREEN_BOOST_DEN 163   // = 0xA3, the C1 green contrast register value
+
+static uint8_t lutR[256], lutG[256], lutB[256];
+
+static void build_color_lut(void) {
+    for(int i = 0; i < 256; i++) {
+        lutR[i] = (uint8_t)i;   // R: no adjustment needed
+        lutB[i] = (uint8_t)i;   // B: no adjustment needed
+        if(screenType == SCREEN_OLED) {
+            // Pre-compensate C1 green attenuation; clamp to 255
+            int g = (i * GREEN_BOOST_NUM + GREEN_BOOST_DEN / 2) / GREEN_BOOST_DEN;
+            lutG[i] = (uint8_t)(g > 255 ? 255 : g);
+        } else {
+            lutG[i] = (uint8_t)i;
+        }
+    }
+}
+
+// ── Full 3-channel colorimetric LUT ──────────────────────────────────────────
+// Rigorous alternative to build_color_lut(). Uses the actual B8h table as the
+// OLED's gamma model, then for each 8-bit input finds the quantized code that
+// makes OLED luminance match macOS sRGB luminance.
+//
+// Method:
+//   target_L = (i/255)^2.2                         (sRGB → linear luminance)
+//   R/B (5-bit): find k in [0,31] minimising |B8h[k*2] - target_L * 179|
+//                → lut = k<<3  (so (lut>>3) == k at the bit-pack stage)
+//   G   (6-bit): find k in [0,63] minimising |B8h[k]   - target_L * 179 * (255/163)|
+//                → lut = k<<2  (compensates C1 green attenuation simultaneously)
+//
+// Limitation: green correction saturates for input > ~163 (hardware C1 ceiling).
+// Raising C1 green in initOLED[] from 0xA3 → 0xCC recovers those highlights.
+//
+// To use instead of build_color_lut(), swap the call in main() after
+// commandList(). Both write to the same lutR/lutG/lutB arrays.
+
+static const uint8_t b8h[64] = {       // mirrors B8h gamma table in initOLED[]
+    0x00, 0x08, 0x0D, 0x12, 0x17, 0x1B, 0x1F, 0x22,
+    0x26, 0x2A, 0x2D, 0x30, 0x34, 0x37, 0x3A, 0x3D,
+    0x40, 0x43, 0x46, 0x49, 0x4C, 0x4F, 0x51, 0x54,
+    0x57, 0x59, 0x5C, 0x5F, 0x61, 0x64, 0x67, 0x69,
+    0x6C, 0x6E, 0x71, 0x73, 0x76, 0x78, 0x7B, 0x7D,
+    0x7F, 0x82, 0x84, 0x86, 0x89, 0x8B, 0x8D, 0x90,
+    0x92, 0x94, 0x97, 0x99, 0x9B, 0x9D, 0x9F, 0xA2,
+    0xA4, 0xA6, 0xA8, 0xAA, 0xAD, 0xAF, 0xB1, 0xB3,
+};
+
+static void build_full_color_lut(void) {
+    if(screenType != SCREEN_OLED) {
+        for(int i = 0; i < 256; i++) lutR[i] = lutG[i] = lutB[i] = (uint8_t)i;
+        return;
+    }
+
+    const double B8H_MAX     = 0xB3;          // max drive value in B8h table (179)
+    const double GREEN_SCALE = 255.0 / 163.0; // reciprocal of C1 green (0xA3/0xFF)
+
+    for(int i = 0; i < 256; i++) {
+        double L = (i == 0) ? 0.0 : pow(i / 255.0, 2.2); // sRGB → linear
+
+        // ── R / B — 5-bit, uses every other B8h entry (0, 2, 4 … 62) ─────
+        double target_rb = L * B8H_MAX;
+        int k_rb = 0; double best_rb = 1e9;
+        for(int k = 0; k < 32; k++) {
+            double d = fabs(b8h[k * 2] - target_rb);
+            if(d < best_rb) { best_rb = d; k_rb = k; }
+        }
+        lutR[i] = lutB[i] = (uint8_t)(k_rb << 3);
+
+        // ── G — 6-bit, uses all 64 B8h entries + C1 compensation ─────────
+        double target_g = fmin(L * B8H_MAX * GREEN_SCALE, B8H_MAX);
+        int k_g = 0; double best_g = 1e9;
+        for(int k = 0; k < 64; k++) {
+            double d = fabs(b8h[k] - target_g);
+            if(d < best_g) { best_g = d; k_g = k; }
+        }
+        lutG[i] = (uint8_t)(k_g << 2);
+    }
+}
+
 
 // UTILITY FUNCTIONS -------------------------------------------------------
 
@@ -405,6 +499,8 @@ int main(int argc, char *argv[]) {
 	setRST(1); usleep(5);
 
 	commandList(screenInfo[screenType].init);
+//	build_color_lut();  // Must be called after screenType is finalized
+	build_full_color_lut(); // Alternative to build_color_lut(), see comments above
 
 	// X11 CAPTURE INIT ------------------------------------------------
 	// eyes.py renders to X display :0 via xinit.  We connect as a
@@ -554,6 +650,9 @@ int main(int argc, char *argv[]) {
 					r = (((p0>>rShift)&0xFF) + ((p1>>rShift)&0xFF) + ((p2>>rShift)&0xFF) + ((p3>>rShift)&0xFF)) >> 2;
 					g = (((p0>>gShift)&0xFF) + ((p1>>gShift)&0xFF) + ((p2>>gShift)&0xFF) + ((p3>>gShift)&0xFF)) >> 2;
 					b = (((p0>>bShift)&0xFF) + ((p1>>bShift)&0xFF) + ((p2>>bShift)&0xFF) + ((p3>>bShift)&0xFF)) >> 2;
+
+					// Apply per-channel color correction (identity on non-OLED screens)
+					r = lutR[r]; g = lutG[g]; b = lutB[b];
 
 					pixelBuf[j * width + i] = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
 				}

@@ -19,10 +19,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Patterns used for both rsync excludes and single-file guard. Use trailing / for directories (rsync skips the dir entirely).
 DEPLOY_EXCLUDED=(
-    "venv/" ".venv*/" "notes/" "mock/"
-    "*.pyc" "__pycache__/" "*.egg-info/"
     ".idea/" ".git/" ".claude/" ".gitignore" ".DS_Store" "*.md"
-    "run_dev.py" "deploy.sh"
+    "venv/" ".venv*/" "notes/" "mock/" "deploy.sh"
+    "*.pyc" "__pycache__/" "*.egg-info/"
 )
 
 RSYNC_EXCLUDES=()

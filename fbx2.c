@@ -528,7 +528,7 @@ int main(int argc, char *argv[]) {
 			char path[64];
 			// Loop through frames while waiting for X
 			for(i=0; ; i++) {
-		    snprintf(path, sizeof(path), "/opt/Pi_Eyes/startup/startup_%02d.raw", i % 12);
+		    snprintf(path, sizeof(path), "/opt/Pi_Eyes/startup/graphics/startup_%02d.raw", i % 12);
 		    FILE *f = fopen(path, "rb");
 		    if(f) {
 					if(fread(img, 1, screenBytes, f) == screenBytes) {

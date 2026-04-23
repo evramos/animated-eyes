@@ -9,7 +9,7 @@ Import order matters:
   2. eyes — runs normally; all Pi hardware calls hit MagicMock silently.
 """
 
-from  mock import hardware  # noqa: F401 — side effect import, must be before eyes
+from mock import hardware  # noqa: F401 — side effect import, must be before eyes
 import main            # noqa: E402 — intentional late import
 
 if __name__ == "__main__":

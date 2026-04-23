@@ -15,7 +15,7 @@ import RPi.GPIO as GPIO
 
 from bluetooth.constants import AXIS_SPEED, AXIS_SPRING
 from constants import *
-from debug_overlay import DebugOverlay
+from diagnostics.debug_overlay import DebugOverlay
 from eye import SequencePlayer, Eye, Eyes
 from gfxutil import points_interp, points_mesh
 from models import DisplayContext, EyeMeshes, HardwareContext, SceneContext, SvgPoints
@@ -119,8 +119,11 @@ def _update_lid(now: float, eye: Eye, eye_meshes: EyeMeshes, svg: SvgPoints, sce
         flip       (bool):         True for right eye (mirrors UV orientation).
     """
     n = eye.blink_weight(now)
-    eye.lids.upper.update(eye_meshes.lids.upper, svg.upper_lid, _blend_lid(eye.upper_tracking_pos, n), scene.upper_lid_regen_threshold, flip)
-    eye.lids.lower.update(eye_meshes.lids.lower, svg.lower_lid, _blend_lid(eye.lower_tracking_pos, n), scene.lower_lid_regen_threshold, flip)
+    blend_upper_lid = _blend_lid(eye.upper_tracking_pos, n)
+    blend_lower_lid = _blend_lid(eye.lower_tracking_pos, n)
+
+    eye.lids.upper.update(eye_meshes.lids.upper, svg.upper_lid, blend_upper_lid, scene.upper_lid_regen_threshold, flip)
+    eye.lids.lower.update(eye_meshes.lids.lower, svg.lower_lid, blend_lower_lid, scene.lower_lid_regen_threshold, flip)
 
 
 # ── Pipeline stages ───────────────────────────────────────────────────────────

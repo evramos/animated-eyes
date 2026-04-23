@@ -26,7 +26,7 @@ listener  = start_gamepad(state, pipeline)
 mykeys    = pi3d.Keyboard()
 
 # ── Frame ──────────────────────────────────────────────────────────────────────
-def frame(pupil_scale):
+def frame(pupil_scale: float):
 
     if listener.quit_requested:
         return False

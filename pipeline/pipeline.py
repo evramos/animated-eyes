@@ -16,7 +16,7 @@ Stage order (called by main.py each frame):
 """
 
 from constants import DEBUG_MOVEMENT, SEQUENCE_FILE
-from debug_overlay import DebugOverlay
+from diagnostics.debug_overlay import DebugOverlay
 from eye import SequencePlayer, Eyes
 from init import init_gpio, init_adc, init_svg, init_display, init_scene, init_ahrs_sensor
 from models import SvgPoints, DisplayContext

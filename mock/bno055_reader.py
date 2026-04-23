@@ -69,16 +69,10 @@ class SerialSensorReader(SensorReader):
     # ── Public interface (mirrors AHRSReader exactly) ──────────────────────────
 
     @property
-    def euler(self) -> tuple[float, float, float]:
-        """(yaw, pitch, roll) in degrees. Thread-safe snapshot."""
+    def euler_and_velocity(self) -> tuple[tuple[float, float, float], float]:
+        """(euler, angular_velocity) in a single lock acquire."""
         with self._lock:
-            return self._euler
-
-    @property
-    def angular_velocity(self) -> float:
-        """Gyro magnitude in °/s. Used to detect 'still' state for neutral recalibration."""
-        with self._lock:
-            return self._angular_velocity
+            return self._euler, self._angular_velocity
 
     @property
     def linear_accel_magnitude(self) -> float:

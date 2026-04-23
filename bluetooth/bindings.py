@@ -12,9 +12,7 @@ from collections.abc import Callable
 from bluetooth import GamepadListener
 from bluetooth.constants import *
 from constants import ControlMode, EyeSet
-from eye import SequencePlayer, Eyes
 from pipeline import FrameState, FramePipeline
-from sensor import SensorReader
 
 
 def start_gamepad(state: FrameState, pipeline: FramePipeline) -> GamepadListener:
@@ -105,8 +103,8 @@ def setup_bindings(listener: GamepadListener, state: FrameState, pipeline: Frame
     listener.add_on_press(BUTTON_MENU, _when(ControlMode.RANDOM, _toggle_crazy_eyes))
 
     # ── SCRIPTED — sequence cycling ───────────────────────────────────────────
-    listener.add_on_press(BUTTON_Y, _when(ControlMode.SCRIPTED, lambda: seq.cycle(-1)))
-    listener.add_on_press(BUTTON_A, _when(ControlMode.SCRIPTED, lambda: seq.cycle(+1)))
+    listener.add_on_press(BUTTON_Y, _when(ControlMode.SCRIPTED, lambda: pipeline.seq.cycle(-1)))
+    listener.add_on_press(BUTTON_A, _when(ControlMode.SCRIPTED, lambda: pipeline.seq.cycle(+1)))
 
     # ── MANUAL — lid adjustment modifier (Y = right eye, A = left eye) ────────
     bind_held(BUTTON_Y, "button_y_held", ControlMode.MANUAL)

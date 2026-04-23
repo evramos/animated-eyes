@@ -85,8 +85,7 @@ def _update_ahrs_position(now: float, eyes: Eyes, sensor: SensorReader, ahrs: AH
     is handled naturally. Neutral updates after RECAL_DELAY seconds of stillness
     (angular velocity below STILL_THRESHOLD).
     """
-    yaw, pitch, _ = sensor.euler
-    velocity = sensor.angular_velocity
+    (yaw, pitch, _), velocity = sensor.euler_and_velocity
 
     if velocity < STILL_THRESHOLD:
         if ahrs.still_since == 0.0:
@@ -210,6 +209,14 @@ def update_eye_set(ctx: _StageCtx, now: float, state: FrameState):
     state.prev_eye_set = eye_set
 
 
+def _start_blink_both(ctx: _StageCtx, now: float) -> float:
+    """Start a blink on both eyes (if not already blinking). Returns the blink duration."""
+    duration = random.uniform(0.035, 0.06)
+    if ctx.eyes.left.blink_state  == NO_BLINK: ctx.eyes.left.start_blink(now, duration)
+    if ctx.eyes.right.blink_state == NO_BLINK: ctx.eyes.right.start_blink(now, duration)
+    return duration
+
+
 def update_blinks(ctx: _StageCtx, now: float, state: FrameState):
     """Advance blink state machines and fire the auto-blink timer.
 
@@ -220,18 +227,14 @@ def update_blinks(ctx: _StageCtx, now: float, state: FrameState):
     """
     if state.auto_blink and (now - state.time_of_last_blink) >= state.time_to_next_blink:
         state.time_of_last_blink = now
-        duration = random.uniform(0.035, 0.06)
-        if ctx.eyes.left.blink_state  == NO_BLINK: ctx.eyes.left.start_blink(now, duration)
-        if ctx.eyes.right.blink_state == NO_BLINK: ctx.eyes.right.start_blink(now, duration)
+        duration = _start_blink_both(ctx, now)
         state.time_to_next_blink = duration * 3 + random.uniform(0.0, 4.0)
 
     ctx.eyes.left.update_blink(WINK_L_PIN,  now, wink_held=state.controller_input.wink_left)
     ctx.eyes.right.update_blink(WINK_R_PIN, now, wink_held=state.controller_input.wink_right)
 
     if BLINK_PIN >= 0 and not KEYFRAME_STEP and GPIO.input(BLINK_PIN) == GPIO.LOW:
-        duration = random.uniform(0.035, 0.06)
-        if ctx.eyes.left.blink_state  == NO_BLINK: ctx.eyes.left.start_blink(now, duration)
-        if ctx.eyes.right.blink_state == NO_BLINK: ctx.eyes.right.start_blink(now, duration)
+        _start_blink_both(ctx, now)
 
 
 def update_lid_tracking(ctx: _StageCtx, state: FrameState):

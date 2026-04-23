@@ -27,14 +27,8 @@ class SensorReader(threading.Thread, ABC):
 
     @property
     @abstractmethod
-    def euler(self) -> tuple[float, float, float]:
-        """(yaw, pitch, roll) in degrees. Thread-safe snapshot."""
-        ...
-
-    @property
-    @abstractmethod
-    def angular_velocity(self) -> float:
-        """Gyro magnitude in °/s."""
+    def euler_and_velocity(self) -> tuple[tuple[float, float, float], float]:
+        """(euler, angular_velocity) in a single lock acquire."""
         ...
 
     @property

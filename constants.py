@@ -46,7 +46,7 @@ EYE_SET_PRESETS: Final = False # True → cycle presets via gamepad; False → u
 
 # ── Expression Sequence File ──────────────────────────────────────────────────────────────────────────────────────────
 # TODO - There will be more expressions later that would be selected by end-user
-SEQUENCE_FILE:   Final = "keyframes/sample1.json"
+SEQUENCE_FILE:   Final = "resources/keyframes/sample1.json"
 
 # ── Tracking Mode ─────────────────────────────────────────────────────────────────────────────────────────────────────
 class TrackingMode(Enum):
@@ -82,8 +82,8 @@ DE_BLINKING:     Final = 2
 #     SET         = auto() # 4
 
 # ── Graphics Assets ───────────────────────────────────────────────────────────────────────────────────────────────────
-SVG_PATH:        Final = "graphics/dragon-eye-edit.svg"
-IRIS_PATH:       Final = "graphics/dragon-iris-color.png"
-SCLERA_PATH:     Final = "graphics/dragon-sclera.png"
-EYE_LID:         Final = "graphics/lid.png"
-UV_MAP:          Final = "graphics/uv.png"
+SVG_PATH:        Final = "resources/graphics/dragon-eye-edit.svg"
+IRIS_PATH:       Final = "resources/graphics/dragon-iris-color.png"
+SCLERA_PATH:     Final = "resources/graphics/dragon-sclera.png"
+EYE_LID:         Final = "resources/graphics/lid.png"
+UV_MAP:          Final = "resources/graphics/uv.png"

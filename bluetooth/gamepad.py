@@ -28,8 +28,8 @@ class GamepadListener:
     Reconnects automatically if the controller disconnects.
     """
 
-    def __init__(self, quit_event: threading.Event):
-        self._quit         = quit_event
+    def __init__(self):
+        self._quit         = threading.Event()
         self._held         = set()   # GC button names currently held
         self._combo_active = set()   # frozensets of combos already fired
         self._press_cbs    = {}      # button name → [callback]
@@ -38,6 +38,15 @@ class GamepadListener:
 
         target = self._run_objc if platform.system() == "Darwin" else self._run_evdev
         self._thread = threading.Thread(target=target, daemon=True, name="gamepad")
+
+    def request_quit(self) -> None:
+        """Signal the application to exit cleanly."""
+        self._quit.set()
+
+    @property
+    def quit_requested(self) -> bool:
+        """True once request_quit() has been called."""
+        return self._quit.is_set()
 
     def add_combo(self, buttons, callback):
         """Register a combo callback. Must be called before start()."""
@@ -135,10 +144,6 @@ class GamepadListener:
             ]
             print(f"[gamepad] mapped {len(buttons)} buttons")
 
-            # profile_axes = profile.axes()
-            # dpad_x_axis  = profile_axes.get("Left Thumbstick X Axis")
-            # dpad_y_axis  = profile_axes.get("Left Thumbstick Y Axis")
-
             while not self._quit.is_set():
                 tick()
 
@@ -152,20 +157,6 @@ class GamepadListener:
                         self._on_press(name)
                     else:
                         self._on_release(name)
-                #
-                # if dpad_x_axis:
-                #     v = dpad_x_axis.value()
-                #     if v < -0.5: self._on_press(DPAD_LEFT)
-                #     else:        self._on_release(DPAD_LEFT)
-                #     if v > 0.5:  self._on_press(DPAD_RIGHT)
-                #     else:        self._on_release(DPAD_RIGHT)
-                #
-                # if dpad_y_axis:
-                #     v = dpad_y_axis.value()
-                #     if v > 0.5:  self._on_press(DPAD_UP)
-                #     else:        self._on_release(DPAD_UP)
-                #     if v < -0.5: self._on_press(DPAD_DOWN)
-                #     else:        self._on_release(DPAD_DOWN)
 
     # ── Linux / Pi — evdev ────────────────────────────────────────────────────
 

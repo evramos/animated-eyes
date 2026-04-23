@@ -7,43 +7,48 @@ wrapped with _when() so they silently no-op when the active mode doesn't match.
 
 Call setup_bindings() after constructing the listener, before start().
 """
+from collections.abc import Callable
+
+from bluetooth import GamepadListener
 from bluetooth.constants import *
 from constants import ControlMode, EyeSet
+from eye import SequencePlayer, Eyes
+from pipeline import FrameState, FramePipeline
+from sensor import SensorReader
 
 
-def start_gamepad(quit_event, state, eyes, sequence_player):
+def start_gamepad(state: FrameState, pipeline: FramePipeline) -> GamepadListener:
     """Create, bind, and start a GamepadListener. Returns the listener."""
-    from bluetooth.gamepad import GamepadListener
-    listener = GamepadListener(quit_event)
-    setup_bindings(listener, quit_event, state, eyes, sequence_player)
+    listener = GamepadListener()
+    setup_bindings(listener, state, pipeline)
     listener.start()
     return listener
 
-
-def setup_bindings(listener, quit_event, state, eyes, sequence_player):
+def setup_bindings(listener: GamepadListener, state: FrameState, pipeline: FramePipeline):
     """Register all gamepad button bindings on listener.
 
     Args:
-        listener        (GamepadListener):  The listener to register callbacks on.
-        quit_event      (threading.Event):  Set to signal a clean exit.
-        state           (FrameState):       Shared per-frame mutable state.
-        eyes            (Eyes):             Left/right eye objects (for MANUAL seed position).
-        sequence_player (SequencePlayer):   Cycled via .cycle() and queried via .current_file.
+        listener    (GamepadListener):  The listener to register callbacks on.
+        state       (FrameState):       Shared per-frame mutable state.
+        pipeline    (FramePipeline):    Provides access to stable contexts needed by callbacks.
     """
     # ── Helpers ───────────────────────────────────────────────────────────────
-    def _switch_mode(mode):
+    def _switch_mode(mode: ControlMode):
+
+        pipeline.sensor.resume() if mode == ControlMode.TRACKING else pipeline.sensor.suspend()
+
         if mode == ControlMode.MANUAL:
-            state.manual_x         = eyes.left.current.x
-            state.manual_y         = eyes.left.current.y
+            state.manual_x         = pipeline.eyes.left.current.x
+            state.manual_y         = pipeline.eyes.left.current.y
             state.manual_last_time = 0.0
             state.manual_pupil     = state.current_pupil
         state.control_mode = mode
-        if mode == ControlMode.SCRIPTED and sequence_player.current_file:
-            print(f"[mode] → {mode.name}  ({sequence_player.current_file})")
+        if mode == ControlMode.SCRIPTED and pipeline.seq.current_file:
+            print(f"[mode] → {mode.name}  ({pipeline.seq.current_file})")
         else:
             print(f"[mode] → {mode.name}")
 
-    def _when(mode, fn):
+    def _when(mode: ControlMode, fn: Callable[[], None]) -> Callable[[], None]:
         """Return a callback that only fires when state.control_mode == mode."""
         return lambda: fn() if state.control_mode == mode else None
 
@@ -60,12 +65,13 @@ def setup_bindings(listener, quit_event, state, eyes, sequence_player):
 
     def _quit():
         print(f"[gamepad] {" + ".join(sorted(GAMEPAD_QUIT_COMBO))} → exiting")
-        quit_event.set()
+        listener.request_quit()
 
     listener.add_combo(GAMEPAD_QUIT_COMBO, _quit)
     listener.add_combo({BUTTON_B, DPAD_LEFT},  lambda: _switch_mode(ControlMode.RANDOM))
     listener.add_combo({BUTTON_B, DPAD_UP},    lambda: _switch_mode(ControlMode.MANUAL))
     listener.add_combo({BUTTON_B, DPAD_RIGHT}, lambda: _switch_mode(ControlMode.SCRIPTED))
+    listener.add_combo({BUTTON_B, DPAD_DOWN},  lambda: _switch_mode(ControlMode.TRACKING))
     listener.add_on_press(BUTTON_OPTIONS, _toggle_auto_blink)
     bind_held(LEFT_SHOULDER,  "wink_left")
     bind_held(RIGHT_SHOULDER, "wink_right")
@@ -99,8 +105,8 @@ def setup_bindings(listener, quit_event, state, eyes, sequence_player):
     listener.add_on_press(BUTTON_MENU, _when(ControlMode.RANDOM, _toggle_crazy_eyes))
 
     # ── SCRIPTED — sequence cycling ───────────────────────────────────────────
-    listener.add_on_press(BUTTON_Y, _when(ControlMode.SCRIPTED, lambda: sequence_player.cycle(-1)))
-    listener.add_on_press(BUTTON_A, _when(ControlMode.SCRIPTED, lambda: sequence_player.cycle(+1)))
+    listener.add_on_press(BUTTON_Y, _when(ControlMode.SCRIPTED, lambda: seq.cycle(-1)))
+    listener.add_on_press(BUTTON_A, _when(ControlMode.SCRIPTED, lambda: seq.cycle(+1)))
 
     # ── MANUAL — lid adjustment modifier (Y = right eye, A = left eye) ────────
     bind_held(BUTTON_Y, "button_y_held", ControlMode.MANUAL)

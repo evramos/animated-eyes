@@ -7,15 +7,14 @@ from constants import *
 
 class EyeState:
 
-    @staticmethod
-    def _random_point():
+    def _random_point(self):
         x = random.uniform(-30.0, 30.0)
         n = math.sqrt(900.0 - x * x)
         y = random.uniform(-n, n)
         return Point(x, y)
 
     def __init__(self):
-        random_point = EyeState._random_point()
+        random_point = self._random_point()
 
         self.start = random_point
         self.destination = Point(random_point.x, random_point.y)
@@ -58,7 +57,7 @@ class EyeState:
                 self.is_moving = False
         else:
             if dt >= self.hold_duration:
-                self.destination = EyeState._random_point()
+                self.destination = self._random_point()
                 self.move_duration = random.uniform(0.075, 0.175)
                 self.start_time = now
                 self.is_moving = True

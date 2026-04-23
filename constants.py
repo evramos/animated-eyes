@@ -16,8 +16,8 @@ ROTATE_DEGREES:  Final = 180   # Screen rotation in degrees
 
 # ── Analog Input Configuration (Requires Snake Eyes Bonnet) ───────────────────────────────────────────────────────────
 PUPIL_IN:        Final = -1    # Pupil control (-1 = auto)
-JOYSTICK_X_IN:   Final = -1     # Eye horizontal position (-1 = auto)
-JOYSTICK_Y_IN:   Final = -1     # Eye vertical position (-1 = auto)
+JOYSTICK_X_IN:   Final = -1    # Eye horizontal position (-1 = auto)
+JOYSTICK_Y_IN:   Final = -1    # Eye vertical position (-1 = auto)
 PUPIL_SMOOTH:    Final = 16    # Filter input from PUPIL_IN if > 0
 
 # ── GPIO Pin Assignments ──────────────────────────────────────────────────────────────────────────────────────────────
@@ -27,10 +27,10 @@ WINK_R_PIN:      Final = 24    # Right eye wink button
 
 # ── Control Modes ─────────────────────────────────────────────────────────────────────────────────────────────────────
 class ControlMode(Enum):
-    RANDOM     = auto() # Eyes will look around randomly
-    MANUAL     = auto() # Eyes are controlled manually via gamepad
-    SCRIPTED   = auto() # Eyes follow keyframe sequence from SEQUENCE_FILE
-    TRACKING   = auto() # Eyes will be controlled by tracking input (e.g. eye tracking or external sensors)
+    RANDOM   = auto() # Eyes will look around randomly
+    MANUAL   = auto() # Eyes are controlled manually via gamepad
+    SCRIPTED = auto() # Eyes follow keyframe sequence from SEQUENCE_FILE
+    TRACKING = auto() # Eyes will be controlled by tracking input (e.g. eye tracking or external sensors)
 
 CONTROL_MODE:   Final = ControlMode.RANDOM
 
@@ -51,9 +51,17 @@ SEQUENCE_FILE:   Final = "keyframes/sample1.json"
 # ── Tracking Mode ─────────────────────────────────────────────────────────────────────────────────────────────────────
 class TrackingMode(Enum):
     EYES   = auto()  # Use tracking eyes data for eye movement
-    GYRO   = auto()  # Use gyroscope data for eye movement
+    GYRO   = auto()  # Use AHRS/IMU (BNO055 IMU FUSION) data for eye movement
+    BOTH   = auto()  # Use both tracking data sources (not implemented yet)
 
-TRACKING_MODE:   Final = TrackingMode.EYES
+TRACKING_MODE:   Final = TrackingMode.GYRO
+
+# ── GYRO Mode (BNO055 IMU FUSION) ─────────────────────────────────────────────────────────────────────────────────────
+SENSITIVITY_X:   Final = 1.0   # head-turn degrees → eye units (±30 range)
+SENSITIVITY_Y:   Final = 0.8   # pitch tends to feel over-reactive; tune lower
+STILL_THRESHOLD: Final = 5.0   # °/s below which = "still" (triggers neutral recalibration)
+RECAL_DELAY:     Final = 0.25  # seconds still before neutral reference updates
+RETURN_SPEED:    Final = 5.0   # leap factor (units/sec) for eye tracking response
 
 # ── Pupil & Convergence Settings ──────────────────────────────────────────────────────────────────────────────────────
 PUPIL_SCALE:     Final = 0.5
@@ -72,3 +80,10 @@ DE_BLINKING:     Final = 2
 #     ENABLE      = auto() # 2
 #     DISABLE     = auto() # 3
 #     SET         = auto() # 4
+
+# ── Graphics Assets ───────────────────────────────────────────────────────────────────────────────────────────────────
+SVG_PATH:        Final = "graphics/dragon-eye-edit.svg"
+IRIS_PATH:       Final = "graphics/dragon-iris-color.png"
+SCLERA_PATH:     Final = "graphics/dragon-sclera.png"
+EYE_LID:         Final = "graphics/lid.png"
+UV_MAP:          Final = "graphics/uv.png"

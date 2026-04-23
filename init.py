@@ -1,17 +1,44 @@
 import math
 import platform
-
-import RPi.GPIO as GPIO
 from xml.dom.minidom import parse
 
+import RPi.GPIO as GPIO
 import pi3d
 
-from gfxutil import get_view_box, get_points, re_axis, zangle, scale_points, points_bounds, mesh_init
+from constants import (WINK_L_PIN, BLINK_PIN, WINK_R_PIN, JOYSTICK_X_IN, JOYSTICK_Y_IN, PUPIL_IN,
+                       TRACKING_MODE, CONTROL_MODE, SVG_PATH, IRIS_PATH, SCLERA_PATH, EYE_LID, UV_MAP)
 from eye import EyeLidMesh
-from snake_eyes_bonnet import SnakeEyesBonnet
-from constants import WINK_L_PIN, BLINK_PIN, WINK_R_PIN, JOYSTICK_X_IN, JOYSTICK_Y_IN, PUPIL_IN
-from models import LidPoints, EyeMeshes, SvgPoints, SceneContext, HardwareContext, DisplayContext
 from eye_sets.base import EyeSetInitializer
+from gfxutil import get_view_box, get_points, re_axis, zangle, scale_points, points_bounds, mesh_init
+from models import LidPoints, EyeMeshes, SvgPoints, SceneContext, HardwareContext, DisplayContext
+from sensor import SensorReader
+from snake_eyes_bonnet import SnakeEyesBonnet
+
+
+def init_ahrs_sensor() -> SensorReader:
+    """Initialize Attitude & Heading Reference System (BNO055 AHRS reader).
+
+    Selection order:
+      1. On macOS / mock: use SERIAL_PORT if set, else auto-detect via WHO probe
+      2. On hardware → SensorReader (I²C, direct BNO055).
+
+    Resumes immediately if TRACKING_MODE is GYRO; otherwise starts suspended
+    until the mode is switched at runtime.
+    """
+    if platform.system() == "Darwin": # True on macOS dev machine; False on Raspberry Pi
+        from mock.bno055_reader import SerialSensorReader
+        selected_sensor = SerialSensorReader()
+    else:
+        from sensor import BNO055SensorReader
+        selected_sensor = BNO055SensorReader()
+
+    selected_sensor.start()
+
+    if CONTROL_MODE == CONTROL_MODE.TRACKING and TRACKING_MODE == TRACKING_MODE.GYRO:
+        selected_sensor.resume()
+
+    return selected_sensor
+
 
 def init_gpio():
     """
@@ -41,10 +68,10 @@ def init_adc() -> HardwareContext:
     return HardwareContext(bonnet=bonnet)
 
 
-def init_display(radius: int) -> DisplayContext:
+def init_display(radius: int | None) -> DisplayContext:
 
     # Set up display and initialize pi3d ---------------------------------------
-    if platform.system() == "Darwin":  # macOS
+    if platform.system() == "Darwin": # True on macOS dev machine; False on Raspberry Pi
         display = pi3d.Display.create(w=800, h=256, samples=4, use_sdl2=True)
     else:  # Raspberry Pi / Linux
         display = pi3d.Display.create(samples=4)
@@ -68,27 +95,26 @@ def init_display(radius: int) -> DisplayContext:
     )
 
 
-def init_svg(path: str) -> SvgPoints:
+def init_svg() -> SvgPoints:
     # Load SVG file, extract paths & convert to point lists --------------------
-
-    dom = parse(path)
+    dom = parse(SVG_PATH)
 
     return SvgPoints(
         view_box=get_view_box(dom),
-        pupil_min=get_points(dom, "pupilMin", 32, True, True),
-        pupil_max=get_points(dom, "pupilMax", 32, True, True),
-        iris=get_points(dom, "iris", 32, True, True),
-        sclera_front=get_points(dom, "scleraFront", 0, False, False),
-        sclera_back=get_points(dom, "scleraBack", 0, False, False),
+        pupil_min=get_points(    dom, "pupilMin",       32, True,  True),
+        pupil_max=get_points(    dom, "pupilMax",       32, True,  True),
+        iris=get_points(         dom, "iris",           32, True,  True),
+        sclera_front=get_points( dom, "scleraFront",     0, False, False),
+        sclera_back=get_points(  dom, "scleraBack",      0, False, False),
         upper_lid=LidPoints(
-            closed=get_points(dom, "upperLidClosed", 33, False, True),
-            open=get_points(dom, "upperLidOpen", 33, False, True),
-            edge=get_points(dom, "upperLidEdge", 33, False, False)
+            closed=get_points(   dom, "upperLidClosed", 33, False, True),
+            open=get_points(     dom, "upperLidOpen",   33, False, True),
+            edge=get_points(     dom, "upperLidEdge",   33, False, False)
         ),
         lower_lid=LidPoints(
-            closed=get_points(dom, "lowerLidClosed", 33, False, False),
-            open=get_points(dom, "lowerLidOpen", 33, False, False),
-            edge=get_points(dom, "lowerLidEdge", 33, False, False)
+            closed=get_points(   dom, "lowerLidClosed", 33, False, False),
+            open=get_points(     dom, "lowerLidOpen",   33, False, False),
+            edge=get_points(     dom, "lowerLidEdge",   33, False, False)
         )
     )
 
@@ -136,12 +162,12 @@ def _lid_regen_threshold(open_pts, closed_pts):
 def init_scene(svg: SvgPoints, ctx: DisplayContext) -> SceneContext:
 
     # Load texture maps --------------------------------------------------------
-    iris_map   = pi3d.Texture("graphics/dragon-iris-color.png", mipmap=False, filter=pi3d.constants.GL_LINEAR)
-    sclera_map = pi3d.Texture("graphics/dragon-sclera.png", mipmap=False, filter=pi3d.constants.GL_LINEAR, blend=True)
-    lid_map    = pi3d.Texture("graphics/lid.png", mipmap=False, filter=pi3d.constants.GL_LINEAR, blend=True)
+    iris_map   = pi3d.Texture(IRIS_PATH,   mipmap=False, filter=pi3d.constants.GL_LINEAR)
+    sclera_map = pi3d.Texture(SCLERA_PATH, mipmap=False, filter=pi3d.constants.GL_LINEAR, blend=True)
+    lid_map    = pi3d.Texture(EYE_LID,     mipmap=False, filter=pi3d.constants.GL_LINEAR, blend=True)
 
     # U/V map may be useful for debugging texture placement; not normally used
-    uv_map = pi3d.Texture("graphics/uv.png", mipmap=False, filter=pi3d.constants.GL_LINEAR, blend=False, m_repeat=True)
+    uv_map     = pi3d.Texture(UV_MAP,      mipmap=False, filter=pi3d.constants.GL_LINEAR, blend=False, m_repeat=True)
 
     # Initialize static geometry -----------------------------------------------
 

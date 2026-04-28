@@ -5,16 +5,22 @@
  * at ~50 Hz for use with DragonEyes SerialSensorReader on macOS.
  *
  * Output (two lines per sample, 115200 baud):
- *   yaw,pitch,roll,gx,gy,gz,lax,lay,laz\n
- *   Calibration: System=N, Gyro=N, Accelerometer=N, Magnetometer=N\n
+ *   EULER mode (default, 10 fields):
+ *     yaw,pitch,roll,gx,gy,gz,lax,lay,laz\n
+ *   QUATERNION mode (11 fields):
+ *     w,x,y,z,gx,gy,gz,lax,lay,laz\n
+ *   (both modes):
+ *     Calibration: System=N, Gyro=N, Accelerometer=N, Magnetometer=N\n
  *
- *   yaw/pitch/roll  — Euler angles in degrees
+ *   yaw/pitch/roll  — Euler angles in degrees (BNO055: x=heading, z=pitch, y=roll)
+ *   w/x/y/z         — Unit quaternion components
  *   gx/gy/gz        — Gyro angular velocity in °/s
  *   lax/lay/laz     — Gravity-subtracted linear acceleration in m/s²
  *
  * Serial commands (sent from host):
- *   WHO   → ACK:DRAGON_EYES_BNO055  (port auto-detection handshake)
- *   CLEAR → wipes saved EEPROM offsets (forces full re-calibration next boot)
+ *   WHO               → ACK:DRAGON_EYES_BNO055  (port auto-detection handshake)
+ *   CLEAR             → wipes saved EEPROM offsets (forces full re-calibration next boot)
+ *   TOGGLE_ANGLE_TYPE → switch between EULER (10 fields) and QUATERNION (11 fields)
  *
  * EEPROM layout (address 0):
  *   [0x00] uint16_t  magic  (0xDE0B = valid offsets present)
@@ -36,6 +42,7 @@
 #include <EEPROM.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BNO055.h>
+#include <Ada
 #include <utility/imumaths.h>
 
 #define BNO055_SAMPLERATE_DELAY_MS  20       // 50 Hz
@@ -45,7 +52,9 @@
 
 Adafruit_BNO055 bno = Adafruit_BNO055(-1, 0x28, &Wire);
 
-bool offsetsSaved = false;  // write once per session when sys hits 3
+bool    useQuaternion = true;   // toggle with TOGGLE_ANGLE_TYPE; false = euler (10 fields), true = quat (11 fields)
+bool    offsetsSaved  = false;  // write once per session when fully calibrated
+bool    printData     = true;   // toggle with TOGGLE_DATA
 
 // ── EEPROM helpers ────────────────────────────────────────────────────────────
 
@@ -54,12 +63,25 @@ void loadOffsets() {
     EEPROM.get(EEPROM_ADDR, magic);
     if (magic != EEPROM_MAGIC) {
         Serial.println(F("EEPROM: no saved offsets — calibrate and they will be stored automatically"));
+        printData = false;
         return;
     }
     adafruit_bno055_offsets_t offsets;
     EEPROM.get(EEPROM_ADDR + sizeof(magic), offsets);
     bno.setSensorOffsets(offsets);  // sensor must be in CONFIG_MODE — safe here, bno.begin() leaves it there
     Serial.println(F("EEPROM: offsets restored — starting pre-calibrated"));
+
+    char buf[64];
+    snprintf(buf, sizeof(buf), "  Acceleration Offset: (%d, %d, %d)", offsets.accel_offset_x, offsets.accel_offset_y, offsets.accel_offset_z);
+    Serial.println(buf);
+    snprintf(buf, sizeof(buf), "  Magnetometer Offset: (%d, %d, %d)", offsets.mag_offset_x, offsets.mag_offset_y, offsets.mag_offset_z);
+    Serial.println(buf);
+    snprintf(buf, sizeof(buf), "  Gyroscope Offset: (%d, %d, %d)", offsets.gyro_offset_x, offsets.gyro_offset_y, offsets.gyro_offset_z);
+    Serial.println(buf);
+    snprintf(buf, sizeof(buf), "  Acceleration Radius: %d", offsets.accel_radius);
+    Serial.println(buf);
+    snprintf(buf, sizeof(buf), "  Magnetometer Radius: %d", offsets.mag_radius);
+    Serial.println(buf);
 }
 
 void saveOffsets() {
@@ -69,6 +91,7 @@ void saveOffsets() {
     EEPROM.put(EEPROM_ADDR, magic);
     EEPROM.put(EEPROM_ADDR + sizeof(magic), offsets);
     Serial.println(F("EEPROM: offsets saved"));
+    printData = true;
 }
 
 void clearOffsets() {
@@ -109,17 +132,15 @@ void setup(void) {
     uint16_t sw_rev   = ((uint16_t)sw_msb << 8) | sw_lsb;
 
     char verBuf[96];
-    snprintf(verBuf, sizeof(verBuf),
-        "BNO055 Rev — SW: %d.%d  BL: %d  Accel: 0x%02X  Gyro: 0x%02X  Mag: 0x%02X",
-        (sw_rev >> 8), (sw_rev & 0xFF),
-        bl_rev, accel_rev, gyro_rev, mag_rev);
+    snprintf(verBuf, sizeof(verBuf), "BNO055 Rev — SW: %d.%d  BL: %d  Accel: 0x%02X  Gyro: 0x%02X  Mag: 0x%02X",
+        (sw_rev >> 8), (sw_rev & 0xFF), bl_rev, accel_rev, gyro_rev, mag_rev);
     Serial.println(verBuf);
 
     // Restore saved calibration offsets before activating the sensor
     loadOffsets();
 
     delay(200);
-    bno.setExtCrystalUse(true);
+    // bno.setExtCrystalUse(true);
 }
 
 // ── Loop ──────────────────────────────────────────────────────────────────────
@@ -133,27 +154,47 @@ void loop(void) {
             Serial.println(F("ACK:DRAGON_EYES_BNO055"));
         } else if (cmd == "CLEAR") {
             clearOffsets();
+        } else if (cmd == "TOGGLE_DATA") {
+            printData = !printData;
+            Serial.print(F("Data output: ")); Serial.println(printData ? F("ON") : F("OFF"));
+        } else if (cmd == "TOGGLE_ANGLE_TYPE") {
+            useQuaternion = !useQuaternion;
+            Serial.print(F("Angle type: "));
+            Serial.println(useQuaternion ? F("QUATERNION (11 fields)") : F("EULER (10 fields)"));
         }
     }
 
-    // Euler angles: x = heading (yaw), y = roll, z = pitch
-    imu::Vector<3> euler  = bno.getVector(Adafruit_BNO055::VECTOR_EULER);
-    imu::Vector<3> angVel = bno.getVector(Adafruit_BNO055::VECTOR_GYROSCOPE);
-    imu::Vector<3> laccel = bno.getVector(Adafruit_BNO055::VECTOR_LINEARACCEL);
-
-    // CSV: yaw,pitch,roll,gx,gy,gz,lax,lay,laz
-    Serial.print(euler.x(), 2);   Serial.print(',');
-    Serial.print(euler.z(), 2);   Serial.print(',');
-    Serial.print(euler.y(), 2);   Serial.print(',');
-    Serial.print(angVel.x(), 2);  Serial.print(',');
-    Serial.print(angVel.y(), 2);  Serial.print(',');
-    Serial.print(angVel.z(), 2);  Serial.print(',');
-    Serial.print(laccel.x(), 2);  Serial.print(',');
-    Serial.print(laccel.y(), 2);  Serial.print(',');
-    Serial.println(laccel.z(), 2);
-
     uint8_t sys, gyro, accel, mag = 0;
     bno.getCalibration(&sys, &gyro, &accel, &mag);
+
+    if (printData) {
+        imu::Vector<3> angVel = bno.getVector(Adafruit_BNO055::VECTOR_GYROSCOPE);
+        imu::Vector<3> laccel = bno.getVector(Adafruit_BNO055::VECTOR_LINEARACCEL);
+
+        if (useQuaternion) {
+            // 10 fields: w,x,y,z,gx,gy,gz,lax,lay,laz
+            imu::Quaternion quat = bno.getQuat();
+            Serial.print(quat.w(), 4); Serial.print(',');
+            Serial.print(quat.x(), 4); Serial.print(',');
+            Serial.print(quat.y(), 4); Serial.print(',');
+            Serial.print(quat.z(), 4); Serial.print(',');
+        } else {
+            // 9 fields: yaw,pitch,roll,gx,gy,gz,lax,lay,laz
+            // BNO055 euler: x=heading(yaw), y=roll, z=pitch
+            imu::Vector<3> euler = bno.getVector(Adafruit_BNO055::VECTOR_EULER);
+            Serial.print(euler.x(), 2); Serial.print(',');
+            Serial.print(euler.z(), 2); Serial.print(',');
+            Serial.print(euler.y(), 2); Serial.print(',');
+        }
+
+        Serial.print(angVel.x(), 2);  Serial.print(',');
+        Serial.print(angVel.y(), 2);  Serial.print(',');
+        Serial.print(angVel.z(), 2);  Serial.print(',');
+        Serial.print(laccel.x(), 2);  Serial.print(',');
+        Serial.print(laccel.y(), 2);  Serial.print(',');
+        Serial.println(laccel.z(), 2);
+    }
+
     Serial.print(F("Calibration: "));
     Serial.print(F("System="));        Serial.print(sys,   DEC); Serial.print(F(", "));
     Serial.print(F("Gyro="));          Serial.print(gyro,  DEC); Serial.print(F(", "));
@@ -161,7 +202,7 @@ void loop(void) {
     Serial.print(F("Magnetometer="));  Serial.println(mag, DEC);
 
     // Save offsets to EEPROM once per session when fully calibrated
-    if (sys == 3 && !offsetsSaved) {
+    if (bno.isFullyCalibrated() && !offsetsSaved) {
         saveOffsets();
         offsetsSaved = true;
     }

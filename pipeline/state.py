@@ -33,11 +33,9 @@ class InputState:
 @dataclass
 class AHRSState:
     """Mutable state for the AHRS (BNO055) head-tracking path."""
-    neutral_yaw:   float = 0.0   # yaw reference for delta calculation
-    neutral_pitch: float = 0.0   # pitch reference
-    neutral_roll:  float = 0.0   # roll reference (reserved for future use)
-    still_since:   float = 0.0   # monotonic time when stillness began (0 = not still)
-    prev_time:     float = 0.0   # last frame time for dt computation
+    neutral_quat:   tuple = (1.0, 0.0, 0.0, 0.0)  # reference orientation as (w, x, y, z) unit quaternion
+    still_since:    float = 0.0   # monotonic time when stillness began (0 = not still)
+    prev_time:      float = 0.0   # last frame time for dt computation
 
 
 @dataclass

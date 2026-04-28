@@ -26,7 +26,7 @@ import board
 import busio
 import adafruit_bno055
 
-from sensor.base import SensorReader
+from sensor.base import SensorReader, SensorSnapshot
 
 
 class CalibrationStatus(NamedTuple):
@@ -52,7 +52,7 @@ class BNO055SensorReader(SensorReader):
         self._active = threading.Event() # set = polling; clear = suspended
 
         # Cached sensor readings, updated under _lock
-        self._euler:                   tuple[float, float, float] = (0.0, 0.0, 0.0)
+        self._quaternion:              tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.0)
         self._angular_velocity:        float             = 0.0
         self._linear_accel_magnitude:  float             = 0.0
         self._fully_calibrated:        bool              = False
@@ -67,11 +67,16 @@ class BNO055SensorReader(SensorReader):
 
     # ── Public properties ──────────────────────────────────────────────────────
 
-    @property
-    def euler_and_velocity(self) -> tuple[tuple[float, float, float], float]:
-        """(euler, angular_velocity) in a single lock acquire."""
+    def snapshot(self) -> SensorSnapshot:
+        """Capture quaternion, angular_velocity, and bump_detected in a single lock acquire."""
         with self._lock:
-            return self._euler, self._angular_velocity
+            # TODO - Update bump_detected when implementing bump detection based on linear_accel_magnitude threshold.
+            return SensorSnapshot(
+                angular_velocity=self._angular_velocity,
+                bump_detected=False,
+                fully_calibrated=self._fully_calibrated,
+                quaternion=self._quaternion,
+            )
 
     @property
     def linear_accel_magnitude(self) -> float:
@@ -125,10 +130,6 @@ class BNO055SensorReader(SensorReader):
     def _poll(self):
         """Read one sample from the sensor and update cached values."""
         try:
-            # adafruit_bno055 returns (heading, roll, pitch); remap to (yaw, pitch, roll)
-            raw = self._bno.euler
-            heading, roll, pitch = raw if raw else (0.0, 0.0, 0.0)
-
             # Gyro angular velocity (°/s); compute scalar magnitude
             gyro = self._bno.gyro
             gx, gy, gz = gyro if gyro else (0.0, 0.0, 0.0)
@@ -139,10 +140,13 @@ class BNO055SensorReader(SensorReader):
             lax, lay, laz = la if la else (0.0, 0.0, 0.0)
             lam = math.sqrt(lax * lax + lay * lay + laz * laz)
 
+            raw_q = self._bno.quaternion
+            qw, qx, qy, qz = raw_q if raw_q else (1.0, 0.0, 0.0, 0.0)
+
             cal_status = CalibrationStatus._make(self._bno.calibration_status)
 
             with self._lock:
-                self._euler                  = (heading, pitch, roll)
+                self._quaternion             = (qw, qx, qy, qz)
                 self._angular_velocity       = av
                 self._linear_accel_magnitude = lam
                 self._fully_calibrated       = (cal_status.system == 3)

@@ -8,8 +8,15 @@ Exposes the same interface as sensor.reader.SensorReader, so the frame pipeline
 is unaware of which implementation is running.
 
 Arduino output format (two lines per sample, ~50 Hz):
-    yaw,pitch,roll,gx,gy,gz,lax,lay,laz
-    CALIBRATION: System=N Gyro=N Accelerometer=N Magnetometer=N
+    EULER mode (default, 10 fields):
+        yaw,pitch,roll,gx,gy,gz,lax,lay,laz
+    QUATERNION mode (11 fields, after TOGGLE_ANGLE_TYPE):
+        w,x,y,z,gx,gy,gz,lax,lay,laz
+    (both modes):
+        Calibration: System=N, Gyro=N, Accelerometer=N, Magnetometer=N
+
+Quaternion is converted to (yaw, pitch, roll) internally — the pipeline always
+receives euler angles regardless of which mode the Arduino is using.
 
 suspend() closes the serial port (saves USB power / OS resources).
 resume() reopens it and resumes streaming. The Arduino keeps running; it just buffers until we reconnect.
@@ -22,7 +29,7 @@ import time
 import serial
 from serial.tools import list_ports
 
-from sensor.base import SensorReader
+from sensor.base import SensorReader, SensorSnapshot
 
 
 class SerialSensorReader(SensorReader):
@@ -33,7 +40,7 @@ class SerialSensorReader(SensorReader):
         reader.start()          #
         reader.resume()         # begin reading
         ...
-        yaw, pitch, roll = reader.euler
+        snap = reader.snapshot()
         reader.suspend()       # close port; re-open with resume()
 
     If no port is given (or port is ""), the thread scans for the Arduino
@@ -51,6 +58,9 @@ class SerialSensorReader(SensorReader):
     _PROBE_INTERVAL = 0.5  # seconds between WHO retries on the same open connection
     _PROBE_RETRIES  = 6    # WHO attempts per open connection before giving up on a port
 
+    _BUMP_THRESHOLD  = 8.0  # Euclidean distance (m/s²) between consecutive laccel samples
+    _BUMP_DEBOUNCE_S = 0.3  # seconds to ignore further bumps after one fires #0.3
+
     def __init__(self):
         super().__init__(daemon=True, name="SerialSensorReader")
 
@@ -59,26 +69,46 @@ class SerialSensorReader(SensorReader):
         self._active  = threading.Event()   # set = reading; clear = suspended
 
         # Cached sensor readings, updated under _lock
-        self._euler:                  tuple[float, float, float] = (0.0, 0.0, 0.0)
+        self._quaternion:             tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.0)
         self._angular_velocity:       float = 0.0
         self._linear_accel_magnitude: float = 0.0
         self._fully_calibrated:       bool  = False
+
+        # Bump detection state
+        self._prev_laccel:   tuple[float, float, float] | None = None
+        self._bump_detected: bool  = False
+        self._last_bump_t:   float = 0.0
 
         self._ser: serial.Serial | None = None
 
     # ── Public interface (mirrors AHRSReader exactly) ──────────────────────────
 
-    @property
-    def euler_and_velocity(self) -> tuple[tuple[float, float, float], float]:
-        """(euler, angular_velocity) in a single lock acquire."""
+    def snapshot(self) -> SensorSnapshot:
+        """Capture quaternion, angular_velocity, and bump_detected in a single lock acquire."""
         with self._lock:
-            return self._euler, self._angular_velocity
+            return SensorSnapshot(
+                angular_velocity=self._angular_velocity,
+                bump_detected=self._bump_detected_action(),
+                fully_calibrated=self._fully_calibrated,
+                quaternion=self._quaternion,
+            )
 
     @property
     def linear_accel_magnitude(self) -> float:
-        """Gravity-subtracted linear acceleration magnitude in m/s². Used for bump detection."""
+        """Gravity-subtracted linear acceleration magnitude in m/s²."""
         with self._lock:
             return self._linear_accel_magnitude
+
+    def _bump_detected_action(self) -> bool:
+        fired = self._bump_detected
+        self._bump_detected = False
+        return fired
+
+    @property
+    def bump_detected(self) -> bool:
+        """True if a bump was detected since the last time this was read. Clears on read."""
+        with self._lock:
+            return self._bump_detected_action()
 
     @property
     def fully_calibrated(self) -> bool:
@@ -125,25 +155,69 @@ class SerialSensorReader(SensorReader):
                 pass
             self._ser = None
 
+    @staticmethod
+    def _euler_to_quat(yaw_deg: float, pitch_deg: float, roll_deg: float) -> tuple[float, float, float, float]:
+        """Convert (yaw, pitch, roll) in degrees to a unit quaternion (w, x, y, z).
+
+        ZYX / aerospace convention matching BNO055 NDOF output.
+        Used as a fallback when the Arduino is streaming in EULER mode (9 fields).
+        """
+        y = math.radians(yaw_deg)   * 0.5
+        p = math.radians(pitch_deg) * 0.5
+        r = math.radians(roll_deg)  * 0.5
+        cy, sy = math.cos(y), math.sin(y)
+        cp, sp = math.cos(p), math.sin(p)
+        cr, sr = math.cos(r), math.sin(r)
+        return (
+            cr * cp * cy + sr * sp * sy,
+            sr * cp * cy - cr * sp * sy,
+            cr * sp * cy + sr * cp * sy,
+            cr * cp * sy - sr * sp * cy,
+        )
+
     def _parse_csv(self, line: str):
         """Parse a CSV data line and update cached readings.
 
-        Expected: yaw,pitch,roll,gx,gy,gz,lax,lay,laz
+        Routes by field count:
+            9 fields  — EULER:      yaw,pitch,roll,gx,gy,gz,lax,lay,laz
+            10 fields — QUATERNION: w,x,y,z,gx,gy,gz,lax,lay,laz
+        Euler angles are converted to a unit quaternion before storing.
         """
         parts = line.split(',')
-        if len(parts) != 9:
+        n = len(parts)
+        if n not in (9, 10):
             return
         try:
-            yaw, roll, pitch = float(parts[0]), float(parts[1]), float(parts[2])  # swap: BNO055 pitch/roll depend on chip orientation
-            gx, gy, gz       = float(parts[3]), float(parts[4]), float(parts[5])
-            lax, lay, laz    = float(parts[6]), float(parts[7]), float(parts[8])
+            if n == 10:
+                w, x, y, z = float(parts[0]), float(parts[1]), float(parts[2]), float(parts[3])
+                quaternion  = (w, x, y, z)
+                gx, gy, gz  = float(parts[4]), float(parts[5]), float(parts[6])
+                lax, lay, laz = float(parts[7]), float(parts[8]), float(parts[9])
+            else:
+                yaw, pitch, roll = float(parts[0]), float(parts[1]), float(parts[2])
+                quaternion       = self._euler_to_quat(yaw, pitch, roll)
+                gx, gy, gz       = float(parts[3]), float(parts[4]), float(parts[5])
+                lax, lay, laz    = float(parts[6]), float(parts[7]), float(parts[8])
         except ValueError:
             return
 
+        linear_acceleration = (lax, lay, laz)
+        angular_velocity    = math.sqrt(gx * gx + gy * gy + gz * gz)
+
         with self._lock:
-            self._euler                  = (yaw, pitch, roll)
-            self._angular_velocity       = math.sqrt(gx * gx + gy * gy + gz * gz)
+            self._quaternion             = quaternion
+            self._angular_velocity       = angular_velocity
             self._linear_accel_magnitude = math.sqrt(lax * lax + lay * lay + laz * laz)
+
+            # if self._prev_laccel is not None:
+            #     dist = math.sqrt(sum((a - b) ** 2 for a, b in zip(self._prev_laccel, linear_acceleration)))
+            #     now  = time.monotonic()
+            #     print(f"[SensorReader] {dist}")
+            #     if dist >= self._BUMP_THRESHOLD and (now - self._last_bump_t) >= self._BUMP_DEBOUNCE_S:
+            #         self._bump_detected = True
+            #         self._last_bump_t   = now
+
+            self._prev_laccel = linear_acceleration
 
     def _parse_calibration(self, line: str):
         """Parse a Calibration line and update calibration status.
@@ -233,10 +307,7 @@ class SerialSensorReader(SensorReader):
                 continue
 
             line = raw.decode("ascii", errors="replace").strip()
-            # now = time.monotonic()
-            # if now - _last_log >= 1.0:
             print(f"[SensorReader] {line}")
-                # _last_log = now
 
             if line.startswith("Calibration:"):
                 self._parse_calibration(line)

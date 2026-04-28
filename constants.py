@@ -59,8 +59,12 @@ TRACKING_MODE:   Final = TrackingMode.GYRO
 # ── GYRO Mode (BNO055 IMU FUSION) ─────────────────────────────────────────────────────────────────────────────────────
 SENSITIVITY_X:   Final = 1.0   # head-turn degrees → eye units (±30 range)
 SENSITIVITY_Y:   Final = 0.8   # pitch tends to feel over-reactive; tune lower
-STILL_THRESHOLD: Final = 5.0   # °/s below which = "still" (triggers neutral recalibration)
-RECAL_DELAY:     Final = 0.25  # seconds still before neutral reference updates
+
+STILL_THRESHOLD_BINARY: Final = 5.0   # °/s below which = "still" (triggers neutral recalibration)
+RECAL_DELAY_BINARY:     Final = 0.25  # seconds still before neutral reference updates
+
+STILL_THRESHOLD_BLENDED: Final = 20.0  # °/s — blend saturates here; eyes fully follow above, fade to center below
+RECAL_DELAY_BLENDED:     Final = 8.0   # seconds still (eyes already centered) before neutral reference drifts
 RETURN_SPEED:    Final = 5.0   # leap factor (units/sec) for eye tracking response
 
 # ── Pupil & Convergence Settings ──────────────────────────────────────────────────────────────────────────────────────
@@ -81,9 +85,10 @@ DE_BLINKING:     Final = 2
 #     DISABLE     = auto() # 3
 #     SET         = auto() # 4
 
-# ── Graphics Assets ───────────────────────────────────────────────────────────────────────────────────────────────────
+# ── Resource Assets ───────────────────────────────────────────────────────────────────────────────────────────────────
 SVG_PATH:        Final = "resources/graphics/dragon-eye-edit.svg"
 IRIS_PATH:       Final = "resources/graphics/dragon-iris-color.png"
 SCLERA_PATH:     Final = "resources/graphics/dragon-sclera.png"
 EYE_LID:         Final = "resources/graphics/lid.png"
 UV_MAP:          Final = "resources/graphics/uv.png"
+KEYFRAME_PATH:   Final = "resources/keyframes/*.json"

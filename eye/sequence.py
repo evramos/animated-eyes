@@ -2,7 +2,7 @@ import glob
 import json
 import os
 
-from constants import AUTO_BLINK, EYELID_TRACKING, KEYFRAME_STEP
+from constants import AUTO_BLINK, EYELID_TRACKING, KEYFRAME_STEP, KEYFRAME_PATH
 from models.point import Point, smoothstep
 
 
@@ -30,7 +30,7 @@ class Keyframe:
 class SequencePlayer:
     def __init__(self, path):
         self.load(path)
-        self._files      = sorted(glob.glob("keyframes/*.json"))
+        self._files      = sorted(glob.glob(KEYFRAME_PATH))
         self._file_index = self._files.index(path) if path in self._files else 0
         print(f"[seq] {len(self._files)} keyframe files: {[os.path.basename(f) for f in self._files]}")
         print(f"[seq] active: {self.current_file or 'none'}")

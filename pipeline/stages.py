@@ -8,6 +8,7 @@ eye-set texture, blinks, lid tracking, lid meshes. All stable context is
 bundled into _StageCtx so callers pass one object instead of many args.
 """
 
+import math
 import random
 from dataclasses import dataclass
 
@@ -21,6 +22,7 @@ from gfxutil import points_interp, points_mesh
 from models import DisplayContext, EyeMeshes, HardwareContext, SceneContext, SvgPoints
 from pipeline.state import AHRSState, FrameState, LidChannels
 from sensor import SensorReader
+from sensor.base import SensorSnapshot
 
 
 # ── Stable context bundle ─────────────────────────────────────────────────────
@@ -42,6 +44,40 @@ class _StageCtx:
     lid_channels:   LidChannels | None
     debug_overlay:  DebugOverlay | None
     display_ctx:    DisplayContext
+
+
+# ── Quaternion math (pure Python, no external deps) ──────────────────────────
+
+def _quat_mul(a: tuple, b: tuple) -> tuple:
+    """Hamilton product of two unit quaternions (w, x, y, z)."""
+    aw, ax, ay, az = a
+    bw, bx, by, bz = b
+    return (
+        aw*bw - ax*bx - ay*by - az*bz,
+        aw*bx + ax*bw + ay*bz - az*by,
+        aw*by - ax*bz + ay*bw + az*bx,
+        aw*bz + ax*by - ay*bx + az*bw,
+    )
+
+
+def _quat_inv(q: tuple) -> tuple:
+    """Inverse of a unit quaternion — its conjugate."""
+    w, x, y, z = q
+    return (w, -x, -y, -z)
+
+
+def _quat_apply(q: tuple, v: tuple) -> tuple:
+    """Rotate vector v by unit quaternion q using Rodrigues' formula."""
+    w, qx, qy, qz = q
+    vx, vy, vz    = v
+    tx = 2.0 * (qy * vz - qz * vy)
+    ty = 2.0 * (qz * vx - qx * vz)
+    tz = 2.0 * (qx * vy - qy * vx)
+    return (
+        vx + w * tx + qy * tz - qz * ty,
+        vy + w * ty + qz * tx - qx * tz,
+        vz + w * tz + qx * ty - qy * tx,
+    )
 
 
 # ── Private helpers ───────────────────────────────────────────────────────────
@@ -78,29 +114,100 @@ def _apply_axis(value: float, neg_held, pos_held, lid_mod, dt) -> float:
     return value
 
 
-def _update_ahrs_position(now: float, eyes: Eyes, sensor: SensorReader, ahrs: AHRSState, dt: float):
-    """Drive eye position from BNO055 head orientation.
+def _update_ahrs_position_binary(now: float, eyes: Eyes, snap: SensorSnapshot, ahrs: AHRSState, dt: float):
+    """Drive eye position from BNO055 head orientation using a binary threshold.
 
-    Computes delta from a recalibrating neutral reference so sustained head tilt
-    is handled naturally. Neutral updates after RECAL_DELAY seconds of stillness
-    (angular velocity below STILL_THRESHOLD).
+    Eyes follow head rotation at full strength while velocity exceeds STILL_THRESHOLD_BINARY,
+    then snap off entirely when still. Neutral recalibrates after RECAL_DELAY seconds
+    of continuous stillness. Simpler than the blended variant but prone to jitter when
+    the gyro oscillates around the threshold.
     """
-    (yaw, pitch, _), velocity = sensor.euler_and_velocity
+    q_current = snap.quaternion
+    velocity = snap.angular_velocity
 
-    if velocity < STILL_THRESHOLD:
+    q_delta = _quat_mul(_quat_inv(ahrs.neutral_quat), q_current)
+
+    if velocity < STILL_THRESHOLD_BINARY:
         if ahrs.still_since == 0.0:
             ahrs.still_since = now
-        elif (now - ahrs.still_since) >= RECAL_DELAY:
-            ahrs.neutral_yaw   = yaw
-            ahrs.neutral_pitch = pitch
+        elif (now - ahrs.still_since) >= RECAL_DELAY_BINARY:
+            ahrs.neutral_quat = q_current
     else:
         ahrs.still_since = 0.0
 
-    yaw_delta   = ((yaw   - ahrs.neutral_yaw)   + 180.0) % 360.0 - 180.0
-    pitch_delta = ((pitch - ahrs.neutral_pitch) +  90.0) % 180.0 -  90.0
+    # Always compute the rotation-based target so the blend has something to fade from.
+    gx, gy, gz = _quat_apply(q_delta, (1.0, 0.0, 0.0))
+    yaw_delta   = -math.degrees(math.atan2(gy, gx))
+    pitch_delta = math.degrees(math.atan2(gz, math.sqrt(gx * gx + gy * gy)))
 
     target_x = max(-30.0, min(30.0, yaw_delta   * SENSITIVITY_X))
     target_y = max(-30.0, min(30.0, pitch_delta * SENSITIVITY_Y))
+
+    t = min(1.0, RETURN_SPEED * dt)
+    eyes.left.current.x += (target_x - eyes.left.current.x) * t
+    eyes.left.current.y += (target_y - eyes.left.current.y) * t
+
+
+def _update_ahrs_position_blended(now: float, eyes: Eyes, snap: SensorSnapshot, ahrs: AHRSState, dt: float):
+    """Drive eye position from BNO055 head orientation using a smooth velocity blend.
+
+    Behaviour:
+        Moving  — eyes follow head rotation scaled by follow_blend (velocity / STILL_THRESHOLD_BLENDED).
+        Slowing — eyes fade proportionally toward center as velocity drops.
+        Still   — eyes snap to center (0, 0) once blend falls below 15% deadband.
+
+    Eliminates the threshold-crossing jitter of the binary approach by scaling eye
+    deflection continuously with angular velocity instead of switching on/off.
+
+    After RECAL_DELAY seconds of continuous stillness the neutral reference snaps
+    to the current orientation so a new sustained head posture is absorbed silently.
+
+    The 180° guard fires when q_delta approaches the atan2 discontinuity
+    (>~162° of relative rotation), snapping neutral forward to prevent a sign flip.
+    """
+    q_current = snap.quaternion
+    velocity  = snap.angular_velocity
+
+    # Relative rotation: how far has the head moved from neutral?
+    q_delta = _quat_mul(_quat_inv(ahrs.neutral_quat), q_current)
+
+    # 180° guard — abs(w) < 0.15 means >~162° from neutral; atan2 sign-flip is
+    # imminent. Snap neutral forward before the discontinuity is reached.
+    if abs(q_delta[0]) < 0.15:
+        ahrs.neutral_quat = q_current
+        ahrs.still_since  = 0.0
+        q_delta = (1.0, 0.0, 0.0, 0.0)
+
+    # Smooth blend: 1.0 = fully follow head, 0.0 = fully at center.
+    # Rises linearly with velocity up to STILL_THRESHOLD_BLENDED, then saturates.
+    # No binary threshold crossing → no jitter from gyro noise.
+    follow_blend = min(1.0, velocity / STILL_THRESHOLD_BLENDED)
+
+    # Always compute the rotation-based target so the blend has something to fade from.
+    gx, gy, gz = _quat_apply(q_delta, (1.0, 0.0, 0.0))
+    yaw_delta   = -math.degrees(math.atan2(gy, gx))
+    pitch_delta = math.degrees(math.atan2(gz, math.sqrt(gx * gx + gy * gy)))
+    rotation_x  = 30.0 * math.tanh(yaw_delta   * SENSITIVITY_X / 30.0)
+    rotation_y  = 30.0 * math.tanh(pitch_delta * SENSITIVITY_Y / 30.0)
+
+    # Scale toward (0, 0) as the head slows — center pull is free, no spring needed.
+    # Deadband: below 15% blend the quaternion noise dominates; snap to center instead.
+    if follow_blend < 0.15:
+        target_x = 0.0
+        target_y = 0.0
+    else:
+        target_x = rotation_x * follow_blend
+        target_y = rotation_y * follow_blend
+
+    # Neutral recalibration: absorb sustained head posture after RECAL_DELAY of stillness.
+    if velocity < STILL_THRESHOLD_BLENDED:
+        if ahrs.still_since == 0.0:
+            ahrs.still_since = now
+        elif (now - ahrs.still_since) >= RECAL_DELAY_BLENDED:
+            ahrs.neutral_quat = q_current
+            ahrs.still_since  = 0.0
+    else:
+        ahrs.still_since = 0.0
 
     t = min(1.0, RETURN_SPEED * dt)
     eyes.left.current.x += (target_x - eyes.left.current.x) * t
@@ -171,7 +278,11 @@ def update_eye_positions(ctx: _StageCtx, now: float, state: FrameState):
             if TRACKING_MODE == TrackingMode.GYRO and ctx.sensor is not None:
                 dt = min(now - state.ahrs.prev_time, 0.05) if state.ahrs.prev_time else 1.0 / TARGET_FPS
                 state.ahrs.prev_time = now
-                _update_ahrs_position(now, ctx.eyes, ctx.sensor, state.ahrs, dt)
+
+                snap = ctx.sensor.snapshot()
+                if snap.bump_detected:
+                    print("[AHRS] Bump detected")
+                _update_ahrs_position_blended(now, ctx.eyes, snap, state.ahrs, dt)
 
     if state.crazy_eyes:
         ctx.eyes.right.update_position(now)

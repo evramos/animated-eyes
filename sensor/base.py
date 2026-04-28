@@ -13,6 +13,15 @@ they are independent of which implementation is running.
 
 import threading
 from abc import ABC, abstractmethod
+from typing import NamedTuple
+
+
+class SensorSnapshot(NamedTuple):
+    """Atomic snapshot of all sensor values captured in a single lock acquire."""
+    angular_velocity: float                              # gyro magnitude in °/s
+    bump_detected:    bool                               # True if a bump fired since the last read (read-and-clear)
+    fully_calibrated: bool                               # True when BNO055 Sys=3 (NDOF fusion active)
+    quaternion:       tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.0)  # (w, x, y, z) unit quaternion
 
 
 class SensorReader(threading.Thread, ABC):
@@ -25,10 +34,9 @@ class SensorReader(threading.Thread, ABC):
 
     # ── Sensor data ────────────────────────────────────────────────────────────
 
-    @property
     @abstractmethod
-    def euler_and_velocity(self) -> tuple[tuple[float, float, float], float]:
-        """(euler, angular_velocity) in a single lock acquire."""
+    def snapshot(self) -> SensorSnapshot:
+        """Capture euler, angular_velocity, and bump_detected in a single lock acquire."""
         ...
 
     @property

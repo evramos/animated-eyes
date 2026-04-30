@@ -1,18 +1,3 @@
-DragonEyes — Animated dragon eyes for Raspberry Pi
-Copyright (C) 2026 Matthew Ramos
-Based on Pi_Eyes by Adafruit Industries, Copyright (C) Adafruit Industries (MIT License)
-
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-The original Adafruit Pi_Eyes code incorporated into this project
-was released under the MIT License. Its copyright notice is preserved
-above as required by that license.
-
----
-
                     GNU GENERAL PUBLIC LICENSE
                        Version 3, 29 June 2007
 

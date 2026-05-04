@@ -214,6 +214,45 @@ def _update_ahrs_position_blended(now: float, eyes: Eyes, snap: SensorSnapshot, 
     eyes.left.current.y += (target_y - eyes.left.current.y) * t
 
 
+def _update_ahrs_position_worldframe(now: float, eyes: Eyes, snap: SensorSnapshot, ahrs: AHRSState, dt: float):
+    """Drive eye position from BNO055 head orientation using a fixed world-frame reference.
+
+    Unlike the blended variant there is no velocity blend and no automatic recalibration.
+    The neutral reference is captured once on the first valid frame and held indefinitely,
+    so eyes always track the absolute orientation delta from that initial pose.
+
+    To reset the forward reference without restarting, set ahrs.neutral_quat externally
+    (e.g. on a button press) back to (1.0, 0.0, 0.0, 0.0) — this function will re-capture
+    on the next frame.
+
+    The 180° guard fires at >~162° of relative rotation to prevent the atan2 sign flip.
+    """
+    q_current = snap.quaternion
+
+    # Capture forward reference on first frame (identity sentinel = not yet initialised).
+    if ahrs.neutral_quat == (1.0, 0.0, 0.0, 0.0):
+        ahrs.neutral_quat = q_current
+        return
+
+    q_delta = _quat_mul(_quat_inv(ahrs.neutral_quat), q_current)
+
+    # 180° guard — same discontinuity risk as blended.
+    if abs(q_delta[0]) < 0.15:
+        ahrs.neutral_quat = q_current
+        q_delta = (1.0, 0.0, 0.0, 0.0)
+
+    gx, gy, gz = _quat_apply(q_delta, (1.0, 0.0, 0.0))
+    yaw_delta   = -math.degrees(math.atan2(gy, gx))
+    pitch_delta =  math.degrees(math.atan2(gz, math.sqrt(gx * gx + gy * gy)))
+
+    target_x = 30.0 * math.tanh(yaw_delta   * SENSITIVITY_X / 30.0)
+    target_y = 30.0 * math.tanh(pitch_delta * SENSITIVITY_Y / 30.0)
+
+    t = min(1.0, RETURN_SPEED * dt)
+    eyes.left.current.x += (target_x - eyes.left.current.x) * t
+    eyes.left.current.y += (target_y - eyes.left.current.y) * t
+
+
 def _update_lid(now: float, eye: Eye, eye_meshes: EyeMeshes, svg: SvgPoints, scene: SceneContext, flip: bool):
     """Blend blink weight with tracking position and regenerate lid meshes for one eye.
 
@@ -282,7 +321,9 @@ def update_eye_positions(ctx: _StageCtx, now: float, state: FrameState):
                 snap = ctx.sensor.snapshot()
                 if snap.bump_detected:
                     print("[AHRS] Bump detected")
-                _update_ahrs_position_blended(now, ctx.eyes, snap, state.ahrs, dt)
+                _update_ahrs_position_binary(now, ctx.eyes, snap, state.ahrs, dt)
+                # _update_ahrs_position_blended(now, ctx.eyes, snap, state.ahrs, dt)
+                # _update_ahrs_position_worldframe(now, ctx.eyes, snap, state.ahrs, dt)
 
     if state.crazy_eyes:
         ctx.eyes.right.update_position(now)

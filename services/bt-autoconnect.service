@@ -1,0 +1,12 @@
+[Unit]
+Description=Auto-connect 8BitDo Micro gamepad
+After=bluetooth.service
+
+[Service]
+Type=simple
+ExecStart=/bin/bash -c 'while true; do bluetoothctl connect E4:17:D8:94:3D:89 2>/dev/null; sleep 10; done'
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

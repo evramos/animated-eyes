@@ -1,0 +1,16 @@
+[Unit]
+Description=Pi Eyes animation
+After=pi-fbx2.service
+OnSuccess=pi-doom.service
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/pi-eyes/env
+ExecStartPre=/bin/sleep 5
+ExecStart=/bin/bash -c 'cd ${PI_EYES_DIR}; xinit ${PYTHON} main.py --radius ${RADIUS} :0'
+StandardOutput=journal
+StandardError=journal
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=pi-fbx2.service

@@ -6,7 +6,8 @@ import RPi.GPIO as GPIO
 import pi3d
 
 from constants import (WINK_L_PIN, BLINK_PIN, WINK_R_PIN, JOYSTICK_X_IN, JOYSTICK_Y_IN, PUPIL_IN,
-                       TRACKING_MODE, CONTROL_MODE, SVG_PATH, IRIS_PATH, SCLERA_PATH, EYE_LID, UV_MAP)
+                       TRACKING_MODE, CONTROL_MODE, SENSOR_TYPE, SensorType, TrackingMode, ControlMode,
+                       SVG_PATH, IRIS_PATH, SCLERA_PATH, EYE_LID, UV_MAP)
 from eye import EyeLidMesh
 from eye_sets.base import EyeSetInitializer
 from gfxutil import get_view_box, get_points, re_axis, zangle, scale_points, points_bounds, mesh_init
@@ -15,29 +16,48 @@ from sensor import SensorReader
 from snake_eyes_bonnet import SnakeEyesBonnet
 
 
-def init_ahrs_sensor() -> SensorReader:
-    """Initialize Attitude & Heading Reference System (BNO055 AHRS reader).
+def _start_sensor(sensor: SensorReader) -> SensorReader:
+    sensor.start()
+    if CONTROL_MODE == ControlMode.TRACKING and TRACKING_MODE == TrackingMode.GYRO:
+        sensor.resume()
+    return sensor
 
-    Selection order:
-      1. On macOS / mock: use SERIAL_PORT if set, else auto-detect via WHO probe
-      2. On hardware → SensorReader (I²C, direct BNO055).
 
-    Resumes immediately if TRACKING_MODE is GYRO; otherwise starts suspended
-    until the mode is switched at runtime.
+def _auto_detect_sensor() -> SensorReader | None:
+    """Probe I²C for a known IMU; returns the first one found or None."""
+    from sensor import BNO085SensorReader, BNO055SensorReader
+    for cls in (BNO085SensorReader, BNO055SensorReader):
+        try:
+            sensor = cls()
+            print(f"[sensor] Auto-detected: {cls.__name__}")
+            return _start_sensor(sensor)
+        except (ValueError, OSError):
+            continue
+    print("[sensor] Auto-detect: no IMU found on I²C bus — GYRO tracking disabled")
+    return None
+
+
+def init_ahrs_sensor() -> SensorReader | None:
+    """Initialize the AHRS sensor reader.
+
+    Returns None when SENSOR_TYPE is NONE or AUTO finds nothing — pipeline
+    handles None gracefully (GYRO tracking stays disabled).
     """
-    if platform.system() == "Darwin": # True on macOS dev machine; False on Raspberry Pi
-        from mock.bno055_reader import SerialSensorReader
-        selected_sensor = SerialSensorReader()
-    else:
-        from sensor import BNO055SensorReader
-        selected_sensor = BNO055SensorReader()
+    if platform.system() == "Darwin":
+        from mock.serial_sensor_reader import SerialBNO08xReader
+        return _start_sensor(SerialBNO08xReader())
 
-    selected_sensor.start()
-
-    if CONTROL_MODE == CONTROL_MODE.TRACKING and TRACKING_MODE == TRACKING_MODE.GYRO:
-        selected_sensor.resume()
-
-    return selected_sensor
+    match SENSOR_TYPE:
+        case SensorType.NONE:
+            return None
+        case SensorType.AUTO:
+            return _auto_detect_sensor()
+        case SensorType.BNO085:
+            from sensor import BNO085SensorReader
+            return _start_sensor(BNO085SensorReader())
+        case SensorType.BNO055:
+            from sensor import BNO055SensorReader
+            return _start_sensor(BNO055SensorReader())
 
 
 def init_gpio():

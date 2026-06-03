@@ -1,0 +1,15 @@
+[Unit]
+Description=SPI framebuffer copy (fbx2)
+After=sysinit.target
+
+[Service]
+Type=simple
+Environment=DISPLAY=:0
+EnvironmentFile=/etc/pi-eyes/fbx2.env
+ExecStart=/bin/sh -c 'exec /opt/Pi_Eyes/fbx2 $FBX2_MODE'
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

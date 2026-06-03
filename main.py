@@ -59,12 +59,14 @@ def _frame_sleep(frame_start):
 
 
 # ── Split Pupil ────────────────────────────────────────────────────────────────
-def split_pupil(start_value, end_value, duration, variance):
+def split_pupil(start_value, end_value, duration, variance) -> bool:
     """Recursive simulated pupil response when no analog sensor is present.
 
     Subdivides the transition between start_value and end_value into smaller
     random segments until the range drops below 0.125, then animates the pupil
     scale linearly over the remaining duration.
+
+    Returns False to abort early (quit requested or mode changed to MANUAL).
 
     Args:
         start_value (float): Pupil scale starting value (0.0–1.0).
@@ -77,18 +79,23 @@ def split_pupil(start_value, end_value, duration, variance):
         duration  *= 0.5
         variance  *= 0.5
         mid_value  = ((start_value + end_value - variance) * 0.5 + random.uniform(0.0, variance))
-        split_pupil(start_value, mid_value, duration, variance)
-        split_pupil(mid_value,   end_value, duration, variance)
+        if not split_pupil(start_value, mid_value, duration, variance):
+            return False
+        return split_pupil(mid_value, end_value, duration, variance)
     else:
         dv = end_value - start_value
         while True:
             frame_start = time.monotonic()
             dt = time.time() - start_time
-            if dt >= duration: break
+            if dt >= duration:
+                break
+            if state.control_mode == ControlMode.MANUAL:
+                return False
             pupil_scale_value = max(PUPIL_MIN, min(start_value + dv * dt / duration, PUPIL_MAX))
             if not frame(pupil_scale_value):
-                return
+                return False
             _frame_sleep(frame_start)
+    return True
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────

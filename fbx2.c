@@ -652,7 +652,7 @@ int main(int argc, char *argv[]) {
 					b = (((p0>>bShift)&0xFF) + ((p1>>bShift)&0xFF) + ((p2>>bShift)&0xFF) + ((p3>>bShift)&0xFF)) >> 2;
 
 					// Apply per-channel color correction (identity on non-OLED screens)
-					r = lutR[r]; g = lutG[g]; b = lutB[b];
+//					r = lutR[r]; g = lutG[g]; b = lutB[b];
 
 					pixelBuf[j * width + i] = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
 				}

@@ -3,6 +3,7 @@ from typing import Final
 
 # Defines all constants and configuration options for the eye control system.
 DEBUG_MOVEMENT:  Final = False
+DEBUG_SENSOR:    Final = False  # Print BNO055 samples to stdout at ~1 Hz while polling
 KEYFRAME_STEP:   Final = False  # Space bar steps one keyframe at a time (SCRIPTED mode only)
 
 # ── Eye Motion Configuration ──────────────────────────────────────────────────────────────────────────────────────────
@@ -32,7 +33,7 @@ class ControlMode(Enum):
     SCRIPTED = auto() # Eyes follow keyframe sequence from SEQUENCE_FILE
     TRACKING = auto() # Eyes will be controlled by tracking input (e.g. eye tracking or external sensors)
 
-CONTROL_MODE:   Final = ControlMode.TRACKING
+CONTROL_MODE:   Final = ControlMode.MANUAL
 
 # ── Eye Sets ──────────────────────────────────────────────────────────────────────────────────────────────────────────
 class EyeSet(Enum):
@@ -55,6 +56,14 @@ class TrackingMode(Enum):
     BOTH   = auto()  # Use both tracking data sources (not implemented yet)
 
 TRACKING_MODE:   Final = TrackingMode.GYRO
+
+class SensorType(Enum):
+    NONE   = auto()  # No sensor; GYRO tracking disabled
+    AUTO   = auto()  # Probe I²C at startup; falls back to NONE if nothing found
+    BNO055 = auto()  # Adafruit BNO055 over I²C (address 0x28)
+    BNO085 = auto()  # Adafruit BNO085 over I²C (address 0x4A)
+
+SENSOR_TYPE:     Final = SensorType.NONE
 
 # ── GYRO Mode (BNO055 IMU FUSION) ─────────────────────────────────────────────────────────────────────────────────────
 SENSITIVITY_X:   Final = 1.0   # head-turn degrees → eye units (±30 range)

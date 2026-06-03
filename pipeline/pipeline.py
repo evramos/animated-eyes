@@ -39,11 +39,11 @@ class FramePipeline:
     def __init__(self, radius: int | None = None):
 
         init_gpio()
-        self._svg:     SvgPoints       = init_svg()
-        self._ctx:     DisplayContext  = init_display(radius)
-        self.eyes:     Eyes            = Eyes(self._svg)
-        self.seq:      SequencePlayer  = SequencePlayer(SEQUENCE_FILE)
-        self.sensor:   SensorReader    = init_ahrs_sensor()
+        self._svg:     SvgPoints           = init_svg()
+        self._ctx:     DisplayContext      = init_display(radius)
+        self.eyes:     Eyes                = Eyes(self._svg)
+        self.seq:      SequencePlayer      = SequencePlayer(SEQUENCE_FILE)
+        self.sensor:   SensorReader | None = init_ahrs_sensor()
 
         try:
             from mock.bonnet import Channel as _Channel, Bonnet as _MockBonnet

@@ -1,44 +1,44 @@
 """
-sensor/reader.py
+sensor/bno085_reader.py
 
-Background thread that reads the Adafruit BNO055 9-DOF IMU at ~50 Hz over I²C.
-Exposes euler angles, angular velocity magnitude, linear acceleration magnitude,
-and calibration status as thread-safe properties.
+Background thread that reads the Adafruit BNO085 9-DOF IMU at ~50 Hz over I²C.
+Uses GAME_ROTATION_VECTOR (gyro + accel, no magnetometer) for immediate
+relative-orientation tracking — equivalent to IMUPLUS_MODE on the BNO055.
 
-Power states:
-  Starts suspended (~40µA, retains calibration) immediately after init.
-  Call resume() to activate; suspend() to park again.
+Key differences from BNO055SensorReader:
+  - Reports must be enabled explicitly before reading.
+  - game_quaternion returns (i, j, k, real) — reordered to (w, x, y, z) internally.
+  - Gyroscope values are in rad/s — converted to °/s for pipeline consistency.
+  - No hardware suspend via CircuitPython; suspend() pauses polling only (~6mA idle).
 
 Wiring (shares existing I²C bus with Snake Eyes Bonnet):
   VIN → 3.3V
   GND → GND
   SDA → GPIO 2
   SCL → GPIO 3
-  RST → GPIO BNO_RST_PIN  (or leave unconnected; set BNO_RST_PIN = -1)
 """
 
 import math
 import time
 import threading
-from typing import NamedTuple
 
 import board
 import busio
-import adafruit_bno055
+from adafruit_bno08x import (
+    BNO_REPORT_GAME_ROTATION_VECTOR,
+    BNO_REPORT_GYROSCOPE,
+    BNO_REPORT_LINEAR_ACCELERATION,
+)
+from adafruit_bno08x.i2c import BNO08X_I2C
 
 from constants import DEBUG_SENSOR
 from sensor.base import SensorReader, SensorSnapshot
 
-
-class CalibrationStatus(NamedTuple):
-    system:        int  # 0–3: overall sensor fusion quality
-    gyroscope:     int  # 0–3: gyroscope calibration
-    accelerometer: int  # 0–3: accelerometer calibration
-    magnetometer:  int  # 0–3: magnetometer calibration
+_RAD_TO_DEG = 180.0 / math.pi
 
 
-class BNO055SensorReader(SensorReader):
-    """Reads BNO055 IMU sensor in the background over I²C.
+class BNO085SensorReader(SensorReader):
+    """Reads BNO085 IMU sensor in the background over I²C.
 
     Instantiate, then call start() once from init. The thread begins suspended — call resume() when GYRO mode
     is selected, suspend() when leaving those modes.
@@ -47,26 +47,27 @@ class BNO055SensorReader(SensorReader):
     _PERIOD = 1.0 / 50.0  # 50 Hz poll rate
 
     def __init__(self):
-        super().__init__(daemon=True, name="BNO055SensorReader")
+        super().__init__(daemon=True, name="BNO085SensorReader")
 
         self._lock   = threading.Lock()
-        self._active = threading.Event() # set = polling; clear = suspended
+        self._active = threading.Event()  # set = polling; clear = suspended
 
         # Cached sensor readings, updated under _lock
-        self._quaternion:              tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.0)
-        self._angular_velocity:        float             = 0.0
-        self._linear_accel_magnitude:  float             = 0.0
-        self._fully_calibrated:        bool              = False
-        self._calibration_status:      CalibrationStatus = CalibrationStatus(0, 0, 0, 0)
+        self._quaternion:             tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.0)
+        self._angular_velocity:       float = 0.0
+        self._linear_accel_magnitude: float = 0.0
+        self._fully_calibrated:       bool  = False
 
         # Set up I²C and sensor
+        # Default address is 0x4A; bridge the ADR pad on the breakout for 0x4B
         self._i2c = busio.I2C(board.SCL, board.SDA)
-        self._bno = adafruit_bno055.BNO055_I2C(self._i2c)
+        self._bno = BNO08X_I2C(self._i2c, address=0x4A)
+        self._enable_reports()
 
         self._debug_tick: int = 0
 
-        # Park in suspend immediately — saves power until GYRO mode is selected
-        self._power_suspend()
+        # Park in suspend immediately — thread blocks until resume() is called
+        # Note: BNO085 has no software suspend register; sensor stays powered (~6mA)
 
     # ── Public properties ──────────────────────────────────────────────────────
 
@@ -89,80 +90,69 @@ class BNO055SensorReader(SensorReader):
 
     @property
     def fully_calibrated(self) -> bool:
-        """True when all four BNO055 sensors report calibration level 3 (Sys=3)."""
+        """True once the gyro bias has been learned (gyr accuracy ≥ 2 on the 0–3 scale)."""
         with self._lock:
             return self._fully_calibrated
-
-    @property
-    def calibration_status(self) -> CalibrationStatus:
-        """Per-sensor calibration levels (0=uncalibrated, 3=fully calibrated).
-
-        Returns a CalibrationStatus(system, gyro, accel, mag) named tuple.
-        """
-        with self._lock:
-            return self._calibration_status
 
     # ── Power management ───────────────────────────────────────────────────────
 
     def suspend(self):
-        """Pause polling and software-suspend the BNO055 (~40µA).
+        """Pause polling. The BNO085 has no software suspend register; sensor stays powered.
 
-        Calibration data is retained; resume() wakes the sensor in milliseconds with no recalibration needed.
-        Prefer this over reset() for routine mode switching.
+        Calibration data is retained. resume() resumes polling immediately with no
+        recalibration needed.
         """
         self._active.clear()
-        self._power_suspend()
 
     def resume(self):
-        """Wake BNO055 from suspend and start polling. Safe to call from the main thread at any time."""
-        self._power_normal()
+        """Start polling. Safe to call from the main thread at any time."""
         self._active.set()
-
 
     # ── Internal ───────────────────────────────────────────────────────────────
 
-    def _power_suspend(self):
-        # CONFIG_MODE must be set before changing the power register.
-        self._bno.mode = adafruit_bno055.CONFIG_MODE
-        self._bno.set_suspend_mode()
-
-    def _power_normal(self):
-        self._bno.set_normal_mode()
-        self._bno.mode = adafruit_bno055.NDOF_MODE
+    def _enable_reports(self):
+        self._bno.enable_feature(BNO_REPORT_GAME_ROTATION_VECTOR)
+        self._bno.enable_feature(BNO_REPORT_GYROSCOPE)
+        self._bno.enable_feature(BNO_REPORT_LINEAR_ACCELERATION)
 
     def _poll(self):
         """Read one sample from the sensor and update cached values."""
         try:
-            # Gyro angular velocity (°/s); compute scalar magnitude
+            # Gyro angular velocity (rad/s → °/s); compute scalar magnitude
             gyro = self._bno.gyro
             gx, gy, gz = gyro if gyro and None not in gyro else (0.0, 0.0, 0.0)
-            av = math.sqrt(gx * gx + gy * gy + gz * gz)
+            gx_deg, gy_deg, gz_deg = gx * _RAD_TO_DEG, gy * _RAD_TO_DEG, gz * _RAD_TO_DEG
+            av = math.sqrt(gx_deg * gx_deg + gy_deg * gy_deg + gz_deg * gz_deg)
 
             # Gravity-subtracted linear acceleration (m/s²); scalar magnitude for bump detection
             la = self._bno.linear_acceleration
             lax, lay, laz = la if la and None not in la else (0.0, 0.0, 0.0)
             lam = math.sqrt(lax * lax + lay * lay + laz * laz)
 
-            raw_q = self._bno.quaternion
-            qw, qx, qy, qz = raw_q if raw_q and None not in raw_q else (1.0, 0.0, 0.0, 0.0)
+            # BNO085 returns (i, j, k, real) — reorder to pipeline convention (w, x, y, z)
+            raw_q = self._bno.game_quaternion
+            if raw_q and None not in raw_q:
+                qi, qj, qk, qreal = raw_q
+                qw, qx, qy, qz = qreal, qi, qj, qk
+            else:
+                qw, qx, qy, qz = 1.0, 0.0, 0.0, 0.0
 
-            cal_status = CalibrationStatus._make(self._bno.calibration_status)
+            # BNO085 doesn't expose calibration levels; use gyro activity as a proxy
+            calibrated = av > 0.0 or (qx != 0.0 or qy != 0.0 or qz != 0.0)
 
             with self._lock:
                 self._quaternion             = (qw, qx, qy, qz)
                 self._angular_velocity       = av
                 self._linear_accel_magnitude = lam
-                self._fully_calibrated       = (cal_status.gyroscope == 3)  # IMUPLUS: gyr:3 is the meaningful signal
-                self._calibration_status     = cal_status
+                self._fully_calibrated       = calibrated
 
             if DEBUG_SENSOR:
                 self._debug_tick += 1
                 if self._debug_tick % 50 == 0:  # ~1 Hz at 50 Hz poll rate
-                    c = cal_status
                     print(
-                        f"[BNO055] q=({qw:+.3f} {qx:+.3f} {qy:+.3f} {qz:+.3f})"
+                        f"[BNO085] q=({qw:+.3f} {qx:+.3f} {qy:+.3f} {qz:+.3f})"
                         f"  av={av:5.1f}°/s  la={lam:.2f}m/s²"
-                        f"  cal=sys:{c.system} gyr:{c.gyroscope} acc:{c.accelerometer} mag:{c.magnetometer}"
+                        f"  cal={'ready' if calibrated else 'warming'}"
                     )
 
         except OSError:

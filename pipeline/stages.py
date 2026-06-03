@@ -40,7 +40,7 @@ class _StageCtx:
     scene:          SceneContext
     svg:            SvgPoints
     seq:            SequencePlayer
-    sensor:         SensorReader
+    sensor:         SensorReader | None
     lid_channels:   LidChannels | None
     debug_overlay:  DebugOverlay | None
     display_ctx:    DisplayContext
@@ -138,7 +138,7 @@ def _update_ahrs_position_binary(now: float, eyes: Eyes, snap: SensorSnapshot, a
     # Always compute the rotation-based target so the blend has something to fade from.
     gx, gy, gz = _quat_apply(q_delta, (1.0, 0.0, 0.0))
     yaw_delta   = -math.degrees(math.atan2(gy, gx))
-    pitch_delta = math.degrees(math.atan2(gz, math.sqrt(gx * gx + gy * gy)))
+    pitch_delta = -math.degrees(math.atan2(gz, math.sqrt(gx * gx + gy * gy)))
 
     target_x = max(-30.0, min(30.0, yaw_delta   * SENSITIVITY_X))
     target_y = max(-30.0, min(30.0, pitch_delta * SENSITIVITY_Y))
@@ -243,7 +243,7 @@ def _update_ahrs_position_worldframe(now: float, eyes: Eyes, snap: SensorSnapsho
 
     gx, gy, gz = _quat_apply(q_delta, (1.0, 0.0, 0.0))
     yaw_delta   = -math.degrees(math.atan2(gy, gx))
-    pitch_delta =  math.degrees(math.atan2(gz, math.sqrt(gx * gx + gy * gy)))
+    pitch_delta = -math.degrees(math.atan2(gz, math.sqrt(gx * gx + gy * gy)))
 
     target_x = 30.0 * math.tanh(yaw_delta   * SENSITIVITY_X / 30.0)
     target_y = 30.0 * math.tanh(pitch_delta * SENSITIVITY_Y / 30.0)
@@ -294,9 +294,11 @@ def update_eye_positions(ctx: _StageCtx, now: float, state: FrameState):
 
                 _input = state.controller_input
                 _lid_mod = _input.button_a_held or _input.button_y_held
+                _frozen  = _input.button_x_held or _input.button_b_held
 
-                state.manual_x = _apply_axis(state.manual_x, _input.dpad_left, _input.dpad_right, _lid_mod, dt)
-                state.manual_y = _apply_axis(state.manual_y, _input.dpad_down, _input.dpad_up, _lid_mod, dt)
+                if not _frozen:
+                    state.manual_x = _apply_axis(state.manual_x, _input.dpad_left, _input.dpad_right, _lid_mod, dt)
+                    state.manual_y = _apply_axis(state.manual_y, _input.dpad_down, _input.dpad_up, _lid_mod, dt)
 
                 ctx.eyes.left.current.x = state.manual_x
                 ctx.eyes.left.current.y = state.manual_y
@@ -504,11 +506,13 @@ def draw_scene(ctx: _StageCtx, state: FrameState):
         else:
             ctx.scene.left.iris.draw()
             ctx.scene.left.sclera.draw()
-        ctx.scene.left.lids.draw()
+        if state.draw_lids:
+            ctx.scene.left.lids.draw()
 
     if right_alt:
         right_alt.draw()
     else:
         ctx.scene.right.iris.draw()
         ctx.scene.right.sclera.draw()
-    ctx.scene.right.lids.draw()
+    if state.draw_lids:
+        ctx.scene.right.lids.draw()

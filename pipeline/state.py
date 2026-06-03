@@ -25,6 +25,8 @@ class InputState:
     dpad_down:     bool = False
     button_a_held: bool = False
     button_y_held: bool = False
+    button_x_held: bool = False
+    button_b_held: bool = False
     trigger_left:  bool = False
     trigger_right: bool = False
     step_key_held: bool = False  # edge detection for KEYFRAME_STEP space press
@@ -55,6 +57,7 @@ class FrameState:
     manual_pupil:       float       = PUPIL_SCALE
     auto_blink:         bool        = AUTO_BLINK
     crazy_eyes:         bool        = CRAZY_EYES
+    draw_lids:          bool        = True
     eye_set:            EyeSet      = EYE_SET
     prev_eye_set:       EyeSet      = EYE_SET
     preset_index:       int         = 0        # cycles through the active EyeSet's presets

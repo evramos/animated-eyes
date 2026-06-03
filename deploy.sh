@@ -22,6 +22,7 @@ DEPLOY_EXCLUDED=(
     ".idea/" ".git/" ".claude/" ".gitignore" ".DS_Store" "*.md"
     "venv/" ".venv*/" "notes/" "mock/" "deploy.sh"
     "*.pyc" "__pycache__/" "*.egg-info/"
+    "LICENSE"
 )
 
 RSYNC_EXCLUDES=()
@@ -32,6 +33,8 @@ unset _pattern
 
 # Changed .c files from the last dir_diff run; populated for full deploy compile step
 CHANGED_C_FILES=()
+# Changed .service files from the last dir_diff run; installed to /etc/systemd/system/
+CHANGED_SERVICE_FILES=()
 
 compile_c() {
     local f="$1"
@@ -39,6 +42,15 @@ compile_c() {
     echo "→ Compiling ${f} on ${REMOTE}..."
     ssh "${REMOTE}" "sudo gcc -O2 -o '${binary}' '${REMOTE_DIR}/${f}' -lpthread -lm -lX11 -lXext"
     echo "✓ Compiled → ${binary}"
+}
+
+install_service() {
+    local f="$1"
+    local filename
+    filename="$(basename "$f")"
+    echo "→ Installing ${filename} to /etc/systemd/system/..."
+    ssh "${REMOTE}" "sudo cp '${REMOTE_DIR}/${f}' '/etc/systemd/system/${filename}'"
+    echo "✓ Installed /etc/systemd/system/${filename}"
 }
 
 confirm() {
@@ -49,26 +61,68 @@ confirm() {
 
 dir_diff() {
     CHANGED_C_FILES=()
+    CHANGED_SERVICE_FILES=()
 
-    local changed
-    changed=$(rsync -n --checksum --itemize-changes -azO "${RSYNC_EXCLUDES[@]}" "${SCRIPT_DIR}/" \
+    # ── Step 1: rsync dry-run for all non-service files ───────────────────────
+    local rsync_changed
+    rsync_changed=$(rsync -n --checksum --itemize-changes -azO "${RSYNC_EXCLUDES[@]}" "${SCRIPT_DIR}/" \
         "${REMOTE}:${REMOTE_DIR}/" 2>/dev/null | grep '^[<>]' | awk '{print $2}' || true)
 
-    if [[ -z "$changed" ]]; then
+    local files=()
+    while IFS= read -r f; do
+        [[ -z "$f" || "$f" == *.service ]] && continue
+        files+=("$f")
+        [[ "$f" == *.c ]] && CHANGED_C_FILES+=("$f")
+    done <<< "$rsync_changed"
+
+    # ── Step 2: check service files against /etc/systemd/system/ (authoritative) ─
+    # One SSH call fetches all system hashes at once.
+    local local_svcs=()
+    local svc_hash_script=""
+    while IFS= read -r svc; do
+        [[ -z "$svc" ]] && continue
+        local_svcs+=("$svc")
+        local svcname
+        svcname="$(basename "$svc")"
+        svc_hash_script+="f='/etc/systemd/system/${svcname}'; "
+        svc_hash_script+="[ -f \"\$f\" ] && sha256sum \"\$f\" | awk '{print \$1}' || echo ''; "
+    done < <(find "${SCRIPT_DIR}" -name "*.service" -not -path "*/.git/*" \
+        | sed "s|${SCRIPT_DIR}/||" | sort)
+
+    local sys_hashes=()
+    if [[ -n "$svc_hash_script" ]]; then
+        while IFS= read -r h; do
+            sys_hashes+=("$h")
+        done < <(ssh "${REMOTE}" "${svc_hash_script}" 2>/dev/null || true)
+    fi
+
+    for i in "${!local_svcs[@]}"; do
+        local svc="${local_svcs[$i]}"
+        local local_hash
+        local_hash=$(shasum -a 256 "${SCRIPT_DIR}/${svc}" | awk '{print $1}')
+        local sys_hash="${sys_hashes[$i]:-}"
+        if [[ "$local_hash" != "$sys_hash" ]]; then
+            CHANGED_SERVICE_FILES+=("$svc")
+            files+=("$svc")
+        fi
+    done
+
+    if [[ ${#files[@]} -eq 0 ]]; then
         echo "✓ Nothing to deploy — all files are up to date"
         return 1
     fi
 
-    local files=()
-    while IFS= read -r f; do
-        [[ -n "$f" ]] && files+=("$f")
-        [[ "$f" == *.c ]] && CHANGED_C_FILES+=("$f")
-    done <<< "$changed"
-
-    # One SSH call to get hash|date for every changed file
+    # ── Step 3: fetch remote hash+date for diff table ─────────────────────────
+    # Service files are compared against /etc/systemd/system/; others against REMOTE_DIR.
     local remote_script=""
     for f in "${files[@]}"; do
-        remote_script+="f='${REMOTE_DIR}/${f}'; "
+        if [[ "$f" == *.service ]]; then
+            local svcname
+            svcname="$(basename "$f")"
+            remote_script+="f='/etc/systemd/system/${svcname}'; "
+        else
+            remote_script+="f='${REMOTE_DIR}/${f}'; "
+        fi
         remote_script+="if [ -f \"\$f\" ]; then "
         remote_script+="  h=\$(sha256sum \"\$f\" | awk '{print \$1}' | cut -c1-12); "
         remote_script+="  d=\$(stat -c '%y' \"\$f\" | cut -d. -f1 | cut -c1-16); "
@@ -119,5 +173,15 @@ if dir_diff; then
             compile_c "${_c}"
         done
         unset _c
+    fi
+
+    if [[ ${#CHANGED_SERVICE_FILES[@]} -gt 0 ]]; then
+        for _s in "${CHANGED_SERVICE_FILES[@]}"; do
+            install_service "${_s}"
+        done
+        unset _s
+        echo "→ Running daemon-reload..."
+        ssh "${REMOTE}" "sudo systemctl daemon-reload"
+        echo "✓ daemon-reload complete"
     fi
 fi

@@ -1,0 +1,14 @@
+[Unit]
+Description=Doom on OLED via xinit
+OnSuccess=pi-eyes.service
+
+[Service]
+Type=simple
+ExecStartPre=/bin/bash -c 'echo "FBX2_MODE=-o -r -m -b 6000000 -s" > /etc/pi-eyes/fbx2.env'
+ExecStartPre=/bin/systemctl restart pi-fbx2.service
+ExecStartPre=/bin/sleep 5
+ExecStart=/bin/bash -c 'xinit /home/reveal/doom/doom-xinit.sh -- :0'
+ExecStopPost=/bin/bash -c 'echo "FBX2_MODE=-o -r -b 10000000 -s" > /etc/pi-eyes/fbx2.env'
+ExecStopPost=/bin/systemctl restart pi-fbx2.service
+StandardOutput=journal
+StandardError=journal

@@ -33,7 +33,8 @@ def setup_bindings(listener: GamepadListener, state: FrameState, pipeline: Frame
     # ── Helpers ───────────────────────────────────────────────────────────────
     def _switch_mode(mode: ControlMode):
 
-        pipeline.sensor.resume() if mode == ControlMode.TRACKING else pipeline.sensor.suspend()
+        if pipeline.sensor is not None:
+            pipeline.sensor.resume() if mode == ControlMode.TRACKING else pipeline.sensor.suspend()
 
         if mode == ControlMode.MANUAL:
             state.manual_x         = pipeline.eyes.left.current.x
@@ -73,11 +74,23 @@ def setup_bindings(listener: GamepadListener, state: FrameState, pipeline: Frame
     listener.add_on_press(BUTTON_OPTIONS, _toggle_auto_blink)
     bind_held(LEFT_SHOULDER,  "wink_left")
     bind_held(RIGHT_SHOULDER, "wink_right")
+    bind_held(BUTTON_X, "button_x_held")
+    bind_held(BUTTON_B, "button_b_held")
 
     # ── Eye set — active in every mode ───────────────────────────────────────
 
+    def _preset_count() -> int:
+        defn = pipeline._c.scene.eye_set_registry.get(state.eye_set)
+        return len(defn.presets) if defn and defn.presets else 1
+
     def _switch_eye_set(eye_set):
         state.eye_set = eye_set
+        state.preset_index = 0
+        if eye_set == EyeSet.NORMAL:
+            state.draw_lids = True
+        else:
+            state.draw_lids = False
+
         print(f"[eye_set] → {state.eye_set.name}")
 
     listener.add_combo({BUTTON_X, DPAD_UP},    lambda: _switch_eye_set(EyeSet.NORMAL))
@@ -85,22 +98,34 @@ def setup_bindings(listener: GamepadListener, state: FrameState, pipeline: Frame
     listener.add_combo({BUTTON_X, DPAD_RIGHT}, lambda: _switch_eye_set(EyeSet.RINGS))
 
     def _next_preset():
-        state.preset_index += 1
+        n = _preset_count()
+        state.preset_index = (state.preset_index + 1) % n
         print(f"[preset] → {state.preset_index}")
 
     def _prev_preset():
-        state.preset_index -= 1
+        n = _preset_count()
+        state.preset_index = (state.preset_index - 1) % n
         print(f"[preset] → {state.preset_index}")
 
-    listener.add_combo({BUTTON_X, RIGHT_SHOULDER},  _next_preset)
-    listener.add_combo({BUTTON_X, RIGHT_TRIGGER},   _prev_preset)
+    listener.add_combo({BUTTON_X, RIGHT_TRIGGER},  _next_preset)
+    listener.add_combo({BUTTON_X, LEFT_TRIGGER},   _prev_preset)
 
     # ── RANDOM — crazy eyes toggle ────────────────────────────────────────────
     def _toggle_crazy_eyes():
         state.crazy_eyes = not state.crazy_eyes
         print(f"[toggle] crazy_eyes → {state.crazy_eyes}")
 
-    listener.add_on_press(BUTTON_MENU, _when(ControlMode.RANDOM, _toggle_crazy_eyes))
+    def _toggle_draw_lids():
+        state.draw_lids = not state.draw_lids
+        print(f"[toggle] draw_lids → {state.draw_lids}")
+
+    def _on_menu():
+        if state.eye_set in (EyeSet.HYPNO, EyeSet.RINGS):
+            _toggle_draw_lids()
+        elif state.control_mode == ControlMode.RANDOM:
+            _toggle_crazy_eyes()
+
+    listener.add_on_press(BUTTON_MENU, _on_menu)
 
     # ── SCRIPTED — sequence cycling ───────────────────────────────────────────
     listener.add_on_press(BUTTON_Y, _when(ControlMode.SCRIPTED, lambda: pipeline.seq.cycle(-1)))

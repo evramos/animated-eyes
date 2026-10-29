@@ -33,7 +33,7 @@ class ControlMode(Enum):
     SCRIPTED = auto() # Eyes follow keyframe sequence from SEQUENCE_FILE
     TRACKING = auto() # Eyes will be controlled by tracking input (e.g. eye tracking or external sensors)
 
-CONTROL_MODE:   Final = ControlMode.MANUAL
+CONTROL_MODE:   Final = ControlMode.RANDOM
 
 # ── Eye Sets ──────────────────────────────────────────────────────────────────────────────────────────────────────────
 class EyeSet(Enum):

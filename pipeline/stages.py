@@ -3,8 +3,8 @@ pipeline/stages.py
 
 Free pipeline-stage functions and their private helpers.
 
-Each function advances one aspect of the frame: eye positions, iris mesh,
-eye-set texture, blinks, lid tracking, lid meshes. All stable context is
+Each function advances one aspect of the frame: eye positions, active eye
+set, blinks, lid tracking, lid meshes. All stable context is
 bundled into _StageCtx so callers pass one object instead of many args.
 """
 
@@ -17,9 +17,8 @@ import RPi.GPIO as GPIO
 from bluetooth.constants import AXIS_SPEED, AXIS_SPRING
 from constants import *
 from diagnostics.debug_overlay import DebugOverlay
-from eye import SequencePlayer, Eye, Eyes
-from gfxutil import points_interp, points_mesh
-from models import DisplayContext, EyeMeshes, HardwareContext, SceneContext, SvgPoints
+from eye import EyeLidMesh, SequencePlayer, Eye, Eyes
+from models import LEFT, RIGHT, DisplayContext, HardwareContext, SceneContext, SvgPoints
 from pipeline.state import AHRSState, FrameState, LidChannels
 from sensor import SensorReader
 from sensor.base import SensorSnapshot
@@ -253,13 +252,13 @@ def _update_ahrs_position_worldframe(now: float, eyes: Eyes, snap: SensorSnapsho
     eyes.left.current.y += (target_y - eyes.left.current.y) * t
 
 
-def _update_lid(now: float, eye: Eye, eye_meshes: EyeMeshes, svg: SvgPoints, scene: SceneContext, flip: bool):
+def _update_lid(now: float, eye: Eye, lids: EyeLidMesh, svg: SvgPoints, scene: SceneContext, flip: bool):
     """Blend blink weight with tracking position and regenerate lid meshes for one eye.
 
     Args:
         now        (float):        Current timestamp in seconds.
         eye        (Eye):          Eye instance (provides tracking_pos and blink_weight).
-        eye_meshes (EyeMeshes):    pi3d mesh objects for this eye (scene.left or scene.right).
+        lids       (EyeLidMesh):   Lid meshes for this eye (scene.lids[LEFT] or scene.lids[RIGHT]).
         svg        (SvgPoints):    Lid point lists.
         scene      (SceneContext): Provides regen thresholds.
         flip       (bool):         True for right eye (mirrors UV orientation).
@@ -268,8 +267,8 @@ def _update_lid(now: float, eye: Eye, eye_meshes: EyeMeshes, svg: SvgPoints, sce
     blend_upper_lid = _blend_lid(eye.upper_tracking_pos, n)
     blend_lower_lid = _blend_lid(eye.lower_tracking_pos, n)
 
-    eye.lids.upper.update(eye_meshes.lids.upper, svg.upper_lid, blend_upper_lid, scene.upper_lid_regen_threshold, flip)
-    eye.lids.lower.update(eye_meshes.lids.lower, svg.lower_lid, blend_lower_lid, scene.lower_lid_regen_threshold, flip)
+    eye.lids.upper.update(lids.upper, svg.upper_lid, blend_upper_lid, scene.upper_lid_regen_threshold, flip)
+    eye.lids.lower.update(lids.lower, svg.lower_lid, blend_lower_lid, scene.lower_lid_regen_threshold, flip)
 
 
 # ── Pipeline stages ───────────────────────────────────────────────────────────
@@ -331,39 +330,18 @@ def update_eye_positions(ctx: _StageCtx, now: float, state: FrameState):
         ctx.eyes.right.update_position(now)
 
 
-def update_iris(ctx: _StageCtx, pupil_scale: float, state: FrameState):
-    """Regenerate iris mesh if pupil scale has changed by at least one regen threshold.
+def update_eye_set(ctx: _StageCtx, now: float, pupil_scale: float, state: FrameState):
+    """Advance the active eye set (texture driver, iris regen) and apply preset changes.
 
-    Interpolates between pupil_min and pupil_max point lists, builds a 3D mesh,
-    and pushes it to both eye iris objects. Skipped if the change is below the
-    scene's iris_regen_threshold (¼-pixel granularity).
+    First access of .renderer builds the set lazily. Only the active set is updated —
+    inactive sets do no per-frame work.
     """
-    if state.eye_set == EyeSet.HYPNO:
-        return  # hypno texture owns the iris mesh; skip SVG-based regen
-    if abs(pupil_scale - state.prev_pupil_scale) >= ctx.scene.iris_regen_threshold:
-        inter_pupil = points_interp(ctx.svg.pupil_min, ctx.svg.pupil_max, pupil_scale)
-        mesh = points_mesh((None, inter_pupil, ctx.svg.iris), 4, -ctx.scene.iris_z, True)
-        ctx.scene.left.iris.re_init(pts=mesh)
-        ctx.scene.right.iris.re_init(pts=mesh)
-        state.prev_pupil_scale = pupil_scale
+    defn = ctx.scene.eye_sets[state.eye_set]
+    if EYE_SET_PRESETS:
+        defn.apply_preset(state.preset_index)
+    defn.renderer.update(now, pupil_scale)
 
-
-def update_eye_set(ctx: _StageCtx, now: float, state: FrameState):
-    """Advance the hypno spiral texture and apply preset changes.
-
-    draw_scene handles which meshes are drawn based on state.eye_set.
-    Texture objects are bound at init and updated in-place — no set_textures needed here.
-    """
-    eye_set = state.eye_set
-    defn = ctx.scene.eye_set_registry.get(eye_set)
-    if defn:
-        defn.meshes()  # trigger lazy build on first activation
-        if defn.driver:
-            if EYE_SET_PRESETS:
-                defn.apply_preset(state.preset_index)
-            defn.driver.update(now)
-
-    state.prev_eye_set = eye_set
+    state.prev_eye_set = state.eye_set
 
 
 def _start_blink_both(ctx: _StageCtx, now: float) -> float:
@@ -460,59 +438,32 @@ def update_lid_tracking(ctx: _StageCtx, state: FrameState):
 
 def update_lids(ctx: _StageCtx, now: float):
     """Blend blink weight into lid weights and regenerate lid meshes for both eyes."""
-    _update_lid(now, ctx.eyes.left,  ctx.scene.left,  ctx.svg, ctx.scene, False)
-    _update_lid(now, ctx.eyes.right, ctx.scene.right, ctx.svg, ctx.scene, True)
+    _update_lid(now, ctx.eyes.left,  ctx.scene.lids[LEFT],  ctx.svg, ctx.scene, False)
+    _update_lid(now, ctx.eyes.right, ctx.scene.lids[RIGHT], ctx.svg, ctx.scene, True)
 
 
 def draw_scene(ctx: _StageCtx, state: FrameState):
-    """Rotate all meshes to current eye positions and draw the frame.
+    """Rotate the active eye set and lids to current eye positions and draw the frame.
 
     Applies X/Y rotation from eye position, optional Z rotation when ROTATE_EYES
-    is set, then draws or delegates to the debug overlay.
+    is set, then draws. DEBUG_MOVEMENT replaces the whole left eye (lids included)
+    with the debug overlay.
     """
+    r    = ctx.scene.eye_sets[state.eye_set].renderer
+    lids = ctx.scene.lids
+    z    = ROTATE_DEGREES if ROTATE_EYES else None
     right_eye_pos = ctx.eyes.right if state.crazy_eyes else ctx.eyes.left
 
-    eye_set = state.eye_set
-    defn    = ctx.scene.eye_set_registry.get(eye_set)
-    left_alt, right_alt = defn.meshes() if defn else (None, None)
+    for side, eye, convergence in ((LEFT,  ctx.eyes.left,  CONVERGENCE),
+                                   (RIGHT, right_eye_pos, -CONVERGENCE)):
+        r.rotate(side, eye.current.y, eye.current.x + convergence, z)
+        if z is not None:
+            lids[side].rotateToZ(z)
 
-    for eye, meshes, alt, convergence in (
-        (ctx.eyes.left, ctx.scene.left,  left_alt,   CONVERGENCE),
-        (right_eye_pos, ctx.scene.right, right_alt, -CONVERGENCE),
-    ):
-        if alt:
-            alt.rotateToX(eye.current.y)
-            alt.rotateToY(eye.current.x + convergence)
-        else:
-            meshes.iris.rotateToX(eye.current.y)
-            meshes.iris.rotateToY(eye.current.x + convergence)
-            meshes.sclera.rotateToX(eye.current.y)
-            meshes.sclera.rotateToY(eye.current.x + convergence)
-
-    if ROTATE_EYES:
-        for meshes, alt in ((ctx.scene.left, left_alt), (ctx.scene.right, right_alt)):
-            if alt:
-                alt.rotateToZ(ROTATE_DEGREES)
-            else:
-                meshes.iris.rotateToZ(ROTATE_DEGREES)
-                meshes.sclera.rotateToZ(ROTATE_DEGREES)
-            meshes.lids.rotateToZ(ROTATE_DEGREES)
-
-    if DEBUG_MOVEMENT:
-        ctx.debug_overlay.draw(ctx.eyes.left, ctx.display_ctx)
-    else:
-        if left_alt:
-            left_alt.draw()
-        else:
-            ctx.scene.left.iris.draw()
-            ctx.scene.left.sclera.draw()
+    for side in (LEFT, RIGHT):
+        if side == LEFT and DEBUG_MOVEMENT:
+            ctx.debug_overlay.draw(ctx.eyes.left, ctx.display_ctx)
+            continue
+        r.draw(side)
         if state.draw_lids:
-            ctx.scene.left.lids.draw()
-
-    if right_alt:
-        right_alt.draw()
-    else:
-        ctx.scene.right.iris.draw()
-        ctx.scene.right.sclera.draw()
-    if state.draw_lids:
-        ctx.scene.right.lids.draw()
+            lids[side].draw()

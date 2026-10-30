@@ -80,20 +80,17 @@ def setup_bindings(listener: GamepadListener, state: FrameState, pipeline: Frame
     # ── Eye set — active in every mode ───────────────────────────────────────
 
     def _preset_count() -> int:
-        defn = pipeline._c.scene.eye_set_registry.get(state.eye_set)
-        return len(defn.presets) if defn and defn.presets else 1
+        defn = pipeline.eye_sets[state.eye_set]
+        return len(defn.presets) or 1
 
     def _switch_eye_set(eye_set):
         state.eye_set = eye_set
         state.preset_index = 0
-        if eye_set == EyeSet.NORMAL:
-            state.draw_lids = True
-        else:
-            state.draw_lids = False
+        state.draw_lids = pipeline.eye_sets[eye_set].draw_lids
 
         print(f"[eye_set] → {state.eye_set.name}")
 
-    listener.add_combo({BUTTON_X, DPAD_UP},    lambda: _switch_eye_set(EyeSet.NORMAL))
+    listener.add_combo({BUTTON_X, DPAD_UP},    lambda: _switch_eye_set(EyeSet.DRAGON))
     listener.add_combo({BUTTON_X, DPAD_LEFT},  lambda: _switch_eye_set(EyeSet.HYPNO))
     listener.add_combo({BUTTON_X, DPAD_RIGHT}, lambda: _switch_eye_set(EyeSet.RINGS))
 

@@ -7,11 +7,11 @@ import pi3d
 
 from constants import (WINK_L_PIN, BLINK_PIN, WINK_R_PIN, JOYSTICK_X_IN, JOYSTICK_Y_IN, PUPIL_IN,
                        TRACKING_MODE, CONTROL_MODE, SENSOR_TYPE, SensorType, TrackingMode, ControlMode,
-                       SVG_PATH, IRIS_PATH, SCLERA_PATH, EYE_LID, UV_MAP)
+                       SVG_PATH, EYE_LID, EYE_SET)
 from eye import EyeLidMesh
 from eye_sets.base import EyeSetInitializer
-from gfxutil import get_view_box, get_points, re_axis, zangle, scale_points, points_bounds, mesh_init
-from models import LidPoints, EyeMeshes, SvgPoints, SceneContext, HardwareContext, DisplayContext
+from gfxutil import get_view_box, get_points, scale_points
+from models import LidPoints, SvgPoints, SceneContext, HardwareContext, DisplayContext
 from sensor import SensorReader
 from snake_eyes_bonnet import SnakeEyesBonnet
 
@@ -180,18 +180,14 @@ def _lid_regen_threshold(open_pts, closed_pts):
     return 0.25 / distance if distance > 0 else 0.0
 
 def init_scene(svg: SvgPoints, ctx: DisplayContext) -> SceneContext:
+    """Build scene-level pieces shared by every eye set (lids), register all eye sets, and pre-warm EYE_SET."""
 
-    # Load texture maps --------------------------------------------------------
-    iris_map   = pi3d.Texture(IRIS_PATH,   mipmap=False, filter=pi3d.constants.GL_LINEAR)
-    sclera_map = pi3d.Texture(SCLERA_PATH, mipmap=False, filter=pi3d.constants.GL_LINEAR, blend=True)
-    lid_map    = pi3d.Texture(EYE_LID,     mipmap=False, filter=pi3d.constants.GL_LINEAR, blend=True)
-
-    # U/V map may be useful for debugging texture placement; not normally used
-    uv_map     = pi3d.Texture(UV_MAP,      mipmap=False, filter=pi3d.constants.GL_LINEAR, blend=False, m_repeat=True)
+    lid_map = pi3d.Texture(EYE_LID, mipmap=False, filter=pi3d.constants.GL_LINEAR, blend=True)
 
     # Initialize static geometry -----------------------------------------------
 
-    # Transform point lists to eye dimensions
+    # Transform point lists to eye dimensions. Must happen here (not in a lazy renderer build): it mutates svg in
+    # place and both lids and the dragon eye set read it — deferring it would leave lids unscaled or double-scale.
     points_list = [
         svg.pupil_min, svg.pupil_max, svg.iris, svg.sclera_front, svg.sclera_back,
         svg.upper_lid.closed, svg.upper_lid.open, svg.upper_lid.edge,
@@ -200,80 +196,25 @@ def init_scene(svg: SvgPoints, ctx: DisplayContext) -> SceneContext:
     for points in points_list:
         scale_points(points, svg.view_box, ctx.eye_radius)
 
-    # Regenerating flexible object geometry (such as eyelids during blinks, or iris during pupil dilation) is CPU intensive, can noticeably slow things
-    # down, especially on single-core boards.  To reduce this load somewhat, determine a size change threshold below which regeneration will not occur;
-    # roughly equal to 1/4 pixel, since 4x4 area sampling is used.
-
-    # Determine change in pupil size to trigger iris geometry regen
-    iris_regen_threshold = 0.0
-    a, b = points_bounds(svg.pupil_min), points_bounds(svg.pupil_max)  # Bounds of pupil at min size (in pixels) at max size
-    max_dist = max(abs(a[0] - b[0]), abs(a[1] - b[1]), abs(a[2] - b[2]), abs(a[3] - b[3]))  # Determine distance of max variance around each edge
-
-    # maxDist is motion range in pixels as pupil scales between 0.0 and 1.0.
-    # 1.0 / maxDist is one pixel's worth of scale range.  Need 1/4 that...
-    if max_dist > 0: iris_regen_threshold = 0.25 / max_dist
-
+    # Regenerating flexible object geometry (such as eyelids during blinks) is CPU intensive, can noticeably slow things
+    # down, especially on single-core boards.  To reduce this load somewhat, determine a size change threshold below which
+    # regeneration will not occur; roughly equal to 1/4 pixel, since 4x4 area sampling is used.
     upper_lid_regen_threshold = _lid_regen_threshold(svg.upper_lid.open, svg.upper_lid.closed)
     lower_lid_regen_threshold = _lid_regen_threshold(svg.lower_lid.open, svg.lower_lid.closed)
-
-    # Generate initial iris meshes; vertex elements will get replaced on a per-frame basis in the main loop, this just sets up textures, etc.
-    right_iris = mesh_init((32, 4), (0, 0.5 / iris_map.iy), True, False)
-    right_iris.set_textures([iris_map])
-    right_iris.set_shader(ctx.shader)
-    right_iris.positionX(-ctx.eye_position)
-
-    # Left iris map U value is offset by 0.5; effectively a 180 degree rotation, so it's less obvious that the same texture is in use on both.
-    left_iris = mesh_init((32, 4), (0.5, 0.5 / iris_map.iy), True, False)
-    left_iris.set_textures([iris_map])
-    left_iris.set_shader(ctx.shader)
-    left_iris.positionX(ctx.eye_position)
-
-    iris_z_angle = zangle(svg.iris, ctx.eye_radius)[0] * 0.99  # Get iris Z depth, for later
 
     # ----------------------------------------------------------------------------------------------------------------------
     # Eyelid meshes are likewise temporary; texture coordinates are assigned here but geometry is dynamically regenerated in main loop.
     left_lids = EyeLidMesh(lid_map, ctx.shader, ctx.eye_position, ctx.eye_radius)
     right_lids = EyeLidMesh(lid_map, ctx.shader, -ctx.eye_position, ctx.eye_radius)
 
-    # ----------------------------------------------------------------------------------------------------------------------
-    # Generate scleras for each eye...start with a 2D shape for lathing...
-    angle1 = zangle(svg.sclera_front, ctx.eye_radius)[1]  # Sclera front angle
-    angle2 = zangle(svg.sclera_back, ctx.eye_radius)[1]  # " back angle
-    angle_range = 180 - angle1 - angle2
-    pts = []
-
-    # ADD EXTRA INITIAL POINT because of some weird behavior with Pi3D and VideoCore VI with the Lathed shapes we make
-    # later. This adds a *tiny* ring of extra polygons that simply disappear on screen. It's not necessary on VC4, but
-    # not harmful either, so we just do it rather than try to be all clever.
-    ca, sa = pi3d.Utility.from_polar((90 - angle1) + angle_range * 0.0001)
-    pts.append((ca * ctx.eye_radius, sa * ctx.eye_radius))
-
-    for i in range(24):
-        ca, sa = pi3d.Utility.from_polar((90 - angle1) - angle_range * i / 23)
-        pts.append((ca * ctx.eye_radius, sa * ctx.eye_radius))
-
-    # Scleras are generated independently (object isn't re-used) so each may have a different image map (heterochromia,
-    # corneal scar, or the same image map can be offset on one so the repetition isn't obvious).
-    left_sclera = pi3d.Lathe(path=pts, sides=64, x=ctx.eye_position)
-    left_sclera.set_textures([sclera_map])
-    # left_sclera.set_textures([uv_map]) # debug option
-    left_sclera.set_shader(ctx.shader)
-    re_axis(left_sclera, 0)
-
-    right_sclera = pi3d.Lathe(path=pts, sides=64, x=-ctx.eye_position)
-    right_sclera.set_textures([sclera_map])
-    right_sclera.set_shader(ctx.shader)
-    re_axis(right_sclera, 0.5)  # Image map offset = 180 degree rotation
-
-    # ── EyeSet registry — each initializer owns its own mesh factory and driver ──
-    eye_set_registry = {}
+    # ── EyeSet registry — factories only; nothing is built until .renderer is accessed ──
+    eye_sets = {}
     for _init in EyeSetInitializer.all():
-        eye_set_registry.update(_init.register(ctx, svg))
+        eye_sets.update(_init.register(ctx, svg))
+    eye_sets[EYE_SET].build()  # pre-warm the startup set so the first frame doesn't stall
 
     return SceneContext(
-        left=EyeMeshes(iris=left_iris, sclera=left_sclera, lids=left_lids),
-        right=EyeMeshes(iris=right_iris, sclera=right_sclera, lids=right_lids),
-        iris_z=iris_z_angle, iris_regen_threshold=iris_regen_threshold,
+        lids=(left_lids, right_lids),
         upper_lid_regen_threshold=upper_lid_regen_threshold, lower_lid_regen_threshold=lower_lid_regen_threshold,
-        eye_set_registry=eye_set_registry,
+        eye_sets=eye_sets,
     )

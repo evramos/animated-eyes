@@ -7,8 +7,7 @@ changes frame to frame.
 
 Stage order (called by main.py each frame):
     update_eye_positions  → advance eye position for this frame
-    update_iris           → regen iris mesh if pupil scale changed (skipped in HYPNO)
-    update_eye_set        → advance hypno spiral texture + sclera fade transition
+    update_eye_set        → advance the active eye set's renderer (texture driver / iris regen)
     update_blinks         → advance blink state machines + auto-blink timer
     update_lid_tracking   → resolve lid tracking positions for both eyes
     update_lids           → blend blink weight into lid weights + regen lid meshes
@@ -20,7 +19,7 @@ from diagnostics.debug_overlay import DebugOverlay
 from eye import SequencePlayer, Eyes
 from init import init_gpio, init_adc, init_svg, init_display, init_scene, init_ahrs_sensor
 from models import SvgPoints, DisplayContext
-from pipeline.stages import (_StageCtx, update_eye_positions, update_iris, update_eye_set, update_blinks,
+from pipeline.stages import (_StageCtx, update_eye_positions, update_eye_set, update_blinks,
                              update_lid_tracking, update_lids, draw_scene)
 from pipeline.state import FrameState, LidChannels
 from sensor import SensorReader
@@ -33,7 +32,7 @@ class FramePipeline:
     thing that changes frame to frame; everything else lives here.
 
     Exposed attributes (needed by main.py / start_gamepad):
-        eyes, hw, seq, sensor
+        eyes, seq, sensor, eye_sets
     """
 
     def __init__(self, radius: int | None = None):
@@ -67,6 +66,7 @@ class FramePipeline:
             debug_overlay  = DebugOverlay(self._ctx) if DEBUG_MOVEMENT else None,
             display_ctx    = self._ctx,
         )
+        self.eye_sets: dict = self._c.scene.eye_sets   # EyeSet → EyeSetDef
 
 
     # ── Display lifecycle ─────────────────────────────────────────────────────
@@ -84,11 +84,8 @@ class FramePipeline:
     def update_eye_positions(self, now: float, state: FrameState) -> None:
         update_eye_positions(self._c, now, state)
 
-    def update_iris(self, pupil_scale: float, state: FrameState) -> None:
-        update_iris(self._c, pupil_scale, state)
-
-    def update_eye_set(self, now: float, state: FrameState) -> None:
-        update_eye_set(self._c, now, state)
+    def update_eye_set(self, now: float, pupil_scale: float, state: FrameState) -> None:
+        update_eye_set(self._c, now, pupil_scale, state)
 
     def update_blinks(self, now: float, state: FrameState) -> None:
         update_blinks(self._c, now, state)

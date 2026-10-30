@@ -51,7 +51,7 @@ DragonEyes/
 │   └── constants.py      — Preset configurations for each eye set
 │
 ├── models/               — Shared dataclasses (import via `from models import X`)
-│   ├── scene_types.py    — LidPoints, EyeMeshes, SvgPoints, SceneContext
+│   ├── scene_types.py    — LidPoints, EyeSetDef, EyeSetRenderer, SvgPoints, SceneContext
 │   ├── system_types.py   — HardwareContext, DisplayContext
 │   └── point.py          — Point, smoothstep
 │
@@ -82,7 +82,7 @@ All runtime behavior is controlled here — no code changes needed for most use 
 | Constant | Default | Description |
 |---|---|---|
 | `CONTROL_MODE` | `RANDOM` | `RANDOM`, `MANUAL`, `SCRIPTED`, or `TRACKING` |
-| `EYE_SET` | `NORMAL` | `NORMAL`, `HYPNO`, `RINGS`, or `GLITCH` |
+| `EYE_SET` | `DRAGON` | `DRAGON`, `HYPNO`, or `RINGS` (`GLITCH` reserved, not yet registered) |
 | `EYE_SET_PRESETS` | `False` | Cycle eye set presets via gamepad |
 | `SEQUENCE_FILE` | `keyframes/sample1.json` | Active keyframe file for `SCRIPTED` mode |
 | `AUTO_BLINK` | `True` | Autonomous random blink timer |
@@ -103,7 +103,7 @@ All runtime behavior is controlled here — no code changes needed for most use 
 
 ### Architecture Refactor
 - Full package structure: `eye/`, `eye_sets/`, `mock/`, `models/`
-- Typed dataclasses for all shared state (`HardwareContext`, `DisplayContext`, `SceneContext`, `SvgPoints`, `EyeMeshes`, `LidPoints`, `Point`)
+- Typed dataclasses for all shared state (`HardwareContext`, `DisplayContext`, `SceneContext`, `SvgPoints`, `EyeSetDef`, `LidPoints`, `Point`)
 - Clean initialization chain: `init_gpio()` → `init_adc()` → `init_svg()` → `init_display()` → `init_scene()`
 - Separation of frame pipeline (`frame_pipeline.py`) from entry point (`main.py`)
 
@@ -122,7 +122,7 @@ All runtime behavior is controlled here — no code changes needed for most use 
 
 ### Eye Sets — Swappable Visual Skins
 - Plugin registry in `eye_sets/` allows runtime eye set switching
-- **NORMAL** — original dragon iris texture (SVG-driven pi3d mesh)
+- **DRAGON** — original dragon iris texture (SVG-driven pi3d mesh)
 - **HYPNO** — live-generated hypnotic spiral, configurable rotation speed and color palette
 - **RINGS** — live-generated concentric rings with configurable palette
 - **GLITCH** — glitch visual effect

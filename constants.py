@@ -37,12 +37,12 @@ CONTROL_MODE:   Final = ControlMode.RANDOM
 
 # ── Eye Sets ──────────────────────────────────────────────────────────────────────────────────────────────────────────
 class EyeSet(Enum):
-    NORMAL   = auto()   # existing dragon iris texture
+    DRAGON   = auto()   # SVG-driven dragon iris + sclera
     HYPNO    = auto()   # live-generated spiral texture
     RINGS    = auto()   # live-generated concentric texture
     GLITCH   = auto()   # glitch effect
 
-EYE_SET:         Final = EyeSet.NORMAL
+EYE_SET:         Final = EyeSet.DRAGON
 EYE_SET_PRESETS: Final = False # True → cycle presets via gamepad; False → use default config
 
 # ── Expression Sequence File ──────────────────────────────────────────────────────────────────────────────────────────

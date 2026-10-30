@@ -45,7 +45,6 @@ class FrameState:
     """Mutable per-frame counters and timers, replacing loose globals in eyes.py."""
     frames:             int         = 0
     beginning_time:     float       = field(default_factory=time.monotonic)
-    prev_pupil_scale:   float       = -1.0   # forces iris regen on first frame
     time_of_last_blink: float       = 0.0
     time_to_next_blink: float       = 1.0
     control_mode:       ControlMode = CONTROL_MODE
@@ -57,11 +56,11 @@ class FrameState:
     manual_pupil:       float       = PUPIL_SCALE
     auto_blink:         bool        = AUTO_BLINK
     crazy_eyes:         bool        = CRAZY_EYES
-    draw_lids:          bool        = True
+    draw_lids:          bool        = True     # main.py seeds this from eye_sets[EYE_SET].draw_lids
     eye_set:            EyeSet      = EYE_SET
     prev_eye_set:       EyeSet      = EYE_SET
     preset_index:       int         = 0        # cycles through the active EyeSet's presets
-    hypno_transition:   float       = 0.0      # 0.0 = NORMAL, 1.0 = fully in HYPNO
+    hypno_transition:   float       = 0.0      # 0.0 = DRAGON, 1.0 = fully in HYPNO
     ahrs:               AHRSState   = field(default_factory=AHRSState)
 
 

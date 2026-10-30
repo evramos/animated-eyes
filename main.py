@@ -12,7 +12,7 @@ import time
 import pi3d
 
 from bluetooth import start_gamepad
-from constants import TARGET_FPS, PUPIL_MIN, PUPIL_MAX, PUPIL_SMOOTH, PUPIL_IN, ControlMode
+from constants import TARGET_FPS, PUPIL_MIN, PUPIL_MAX, PUPIL_SMOOTH, PUPIL_IN, ControlMode, EYE_SET
 from pipeline import FramePipeline, FrameState
 
 # ── Init ───────────────────────────────────────────────────────────────────────
@@ -21,7 +21,7 @@ parser.add_argument("--radius", type=int)
 args, _ = parser.parse_known_args()
 
 pipeline  = FramePipeline(radius=args.radius)
-state     = FrameState()
+state     = FrameState(draw_lids=pipeline.eye_sets[EYE_SET].draw_lids)
 listener  = start_gamepad(state, pipeline)
 mykeys    = pi3d.Keyboard()
 
@@ -39,8 +39,7 @@ def frame(pupil_scale: float):
         state.beginning_time = now
 
     pipeline.update_eye_positions(now, state)
-    pipeline.update_iris(pupil_scale, state)
-    pipeline.update_eye_set(now, state)
+    pipeline.update_eye_set(now, pupil_scale, state)
     pipeline.update_blinks(now, state)
     pipeline.update_lid_tracking(state)
     pipeline.update_lids(now)

@@ -107,6 +107,18 @@ def setup_bindings(listener: GamepadListener, state: FrameState, pipeline: Frame
     listener.add_combo({BUTTON_X, RIGHT_TRIGGER},  _next_preset)
     listener.add_combo({BUTTON_X, LEFT_TRIGGER},   _prev_preset)
 
+    # ── Expression preview — active in every mode ────────────────────────────
+    # Slot 0 is None (normal lids), so cycling past either end returns to normal.
+    _expressions = [None, *sorted(pipeline.expressions)]
+
+    def _cycle_expression(step: int):
+        i = (_expressions.index(state.expression) + step) % len(_expressions)
+        state.expression = _expressions[i]
+        print(f"[expr] → {state.expression or 'off'}  ({i}/{len(_expressions) - 1})")
+
+    listener.add_combo({BUTTON_B, RIGHT_TRIGGER}, lambda: _cycle_expression(+1))
+    listener.add_combo({BUTTON_B, LEFT_TRIGGER},  lambda: _cycle_expression(-1))
+
     # ── RANDOM — crazy eyes toggle ────────────────────────────────────────────
     def _toggle_crazy_eyes():
         state.crazy_eyes = not state.crazy_eyes

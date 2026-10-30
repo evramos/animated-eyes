@@ -38,15 +38,16 @@ class EyeLidMesh:
         self.upper.draw()
         self.lower.draw()
 
-    def rotateToZ(self, angle):
+    def rotateToZ(self, upper_angle, lower_angle=None):
         """
-        Rotates both eyelid meshes around the Z-axis to the specified angle.
+        Rotates the eyelid meshes around the Z-axis.
 
         Args:
-            angle (float): The rotation angle in degrees.
+            upper_angle (float):        Upper lid rotation in degrees.
+            lower_angle (float | None): Lower lid rotation in degrees; None → same as upper.
         """
-        self.upper.rotateToZ(angle)
-        self.lower.rotateToZ(angle)
+        self.upper.rotateToZ(upper_angle)
+        self.lower.rotateToZ(upper_angle if lower_angle is None else lower_angle)
 
 
 class _LidState:

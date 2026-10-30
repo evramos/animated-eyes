@@ -18,7 +18,7 @@ from bluetooth.constants import AXIS_SPEED, AXIS_SPRING
 from constants import *
 from diagnostics.debug_overlay import DebugOverlay
 from eye import EyeLidMesh, SequencePlayer, Eye, Eyes
-from models import LEFT, RIGHT, DisplayContext, HardwareContext, SceneContext, SvgPoints
+from models import LEFT, RIGHT, DisplayContext, Expression, HardwareContext, LidPose, SceneContext, SvgPoints
 from pipeline.state import AHRSState, FrameState, LidChannels
 from sensor import SensorReader
 from sensor.base import SensorSnapshot
@@ -43,6 +43,7 @@ class _StageCtx:
     lid_channels:   LidChannels | None
     debug_overlay:  DebugOverlay | None
     display_ctx:    DisplayContext
+    expressions:    dict[str, Expression]
 
 
 # ── Quaternion math (pure Python, no external deps) ──────────────────────────
@@ -84,6 +85,9 @@ def _quat_apply(q: tuple, v: tuple) -> tuple:
 def _blend_lid(t, n):
     """Blend tracking position with blink weight."""
     return t + n * (1.0 - t)
+
+
+_FLAT_LIDS = LidPose()   # zero rotation — lids ease back to this when no expression is active
 
 
 def _adc_to_angle(ch):
@@ -376,16 +380,25 @@ def update_lid_tracking(ctx: _StageCtx, state: FrameState):
     """Resolve lid tracking positions for both eyes.
 
     Priority (highest → lowest):
+        0. state.expression      — expression preview (B + triggers); influence = 1 until Feature 4
         1. eyelid_tracking=True  — dynamic tracking from eye position
         2. lid_weight authored   — interpolated scripted weights
         3. lid_channels preview  — macOS dev keyboard channels
         4. Fixed defaults        — 0.4 upper / 0.6 lower
 
     eyelid_tracking overrides lid_weight when both are set on a keyframe.
+    MANUAL Y/A hold still overrides everything, including an active expression.
     """
+    expr = ctx.expressions.get(state.expression) if state.expression else None
+
+    # Lid rotation always eases — toward the expression's tilt, or back to flat when none is active
+    for side, eye in ((LEFT, ctx.eyes.left), (RIGHT, ctx.eyes.right)):
+        pose = expr.pose(side) if expr else _FLAT_LIDS
+        eye.ease_lid_rotation(pose.upper_rot, pose.lower_rot)
+
     # MANUAL lid override — Y/A + dpad adjusts right/left lid tracking directly.
-    # If EYELID_TRACKING is False, return early so positions stay in place after release.
-    # If EYELID_TRACKING is True, fall through so tracking resumes when buttons are released.
+    # If EYELID_TRACKING is False (and no expression), return early so positions stay in place after release.
+    # Otherwise fall through so tracking / the expression resumes when buttons are released.
     if state.control_mode == ControlMode.MANUAL:
         _STEP = 0.5 / TARGET_FPS
         con_inp = state.controller_input
@@ -393,8 +406,15 @@ def update_lid_tracking(ctx: _StageCtx, state: FrameState):
             _adjust_lid_tracking(ctx.eyes.right, con_inp, _STEP)
         if con_inp.button_a_held:
             _adjust_lid_tracking(ctx.eyes.left, con_inp, _STEP)
-        if (con_inp.button_y_held or con_inp.button_a_held) or not EYELID_TRACKING:
+        if (con_inp.button_y_held or con_inp.button_a_held) or (not EYELID_TRACKING and expr is None):
             return
+
+    # Expression weights — each eye gets its own pose, so asymmetric presets ignore MIRROR_LIDS
+    if expr is not None:
+        for side, eye in ((LEFT, ctx.eyes.left), (RIGHT, ctx.eyes.right)):
+            pose = expr.pose(side)
+            eye.ease_lid_weights(pose.upper_wt, pose.lower_wt)
+        return
 
     right_independent = state.crazy_eyes or not MIRROR_LIDS
 
@@ -442,23 +462,30 @@ def update_lids(ctx: _StageCtx, now: float):
     _update_lid(now, ctx.eyes.right, ctx.scene.lids[RIGHT], ctx.svg, ctx.scene, True)
 
 
-def draw_scene(ctx: _StageCtx, state: FrameState):
+def draw_scene(ctx: _StageCtx, now: float, state: FrameState):
     """Rotate the active eye set and lids to current eye positions and draw the frame.
 
     Applies X/Y rotation from eye position, optional Z rotation when ROTATE_EYES
-    is set, then draws. DEBUG_MOVEMENT replaces the whole left eye (lids included)
-    with the debug overlay.
+    is set, then draws. Lids always get Z rotation: the screen mount angle plus the
+    eye's expression tilt (mirrored on the right eye, flattened as the lid blinks
+    closed). DEBUG_MOVEMENT replaces the whole left eye (lids included) with the
+    debug overlay.
     """
     r    = ctx.scene.eye_sets[state.eye_set].renderer
     lids = ctx.scene.lids
     z    = ROTATE_DEGREES if ROTATE_EYES else None
+    base = z or 0
     right_eye_pos = ctx.eyes.right if state.crazy_eyes else ctx.eyes.left
 
     for side, eye, convergence in ((LEFT,  ctx.eyes.left,  CONVERGENCE),
                                    (RIGHT, right_eye_pos, -CONVERGENCE)):
         r.rotate(side, eye.current.y, eye.current.x + convergence, z)
-        if z is not None:
-            lids[side].rotateToZ(z)
+
+    # Right lids are built mirrored (flip=True), so the same semantic tilt needs the opposite Z sign
+    for side, eye, sign in ((LEFT, ctx.eyes.left, 1.0), (RIGHT, ctx.eyes.right, -1.0)):
+        flat = 1.0 - eye.blink_weight(now)
+        lids[side].rotateToZ(base + sign * eye.upper_rot * flat,
+                             base + sign * eye.lower_rot * flat)
 
     for side in (LEFT, RIGHT):
         if side == LEFT and DEBUG_MOVEMENT:

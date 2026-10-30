@@ -61,6 +61,7 @@ class FrameState:
     prev_eye_set:       EyeSet      = EYE_SET
     preset_index:       int         = 0        # cycles through the active EyeSet's presets
     hypno_transition:   float       = 0.0      # 0.0 = DRAGON, 1.0 = fully in HYPNO
+    expression:         str | None  = None     # active expression name; None = normal lid behaviour
     ahrs:               AHRSState   = field(default_factory=AHRSState)
 
 

@@ -43,7 +43,7 @@ def frame(pupil_scale: float):
     pipeline.update_blinks(now, state)
     pipeline.update_lid_tracking(state)
     pipeline.update_lids(now)
-    pipeline.draw_scene(state)
+    pipeline.draw_scene(now, state)
     return True
 
 

@@ -232,6 +232,10 @@ Expression sits above tracking because a held emotion should not be pulled aroun
 eye's vertical position. An expression could set `eyelid_tracking=True` explicitly
 if blending the two is wanted later.
 
+> **Superseded by Feature 4:** levels 2–4 are no longer strictly ranked. Tracking or scripted
+> weights form the `keyframe_pose`, and the expression is blended over it by `influence`.
+> Only the MANUAL override still bypasses everything.
+
 ### Keyframe JSON integration
 ```json
 { "destination": [0, 0], "move_duration": 0.8, "hold_duration": 2.0,
@@ -243,8 +247,8 @@ if blending the two is wanted later.
   into the emotion while the eye travels.
 - Optional `lid_rotation: [upper, lower]` (or a `{"left": …, "right": …}` dict, mirroring
   `lid_weight`) for one-off angles without a named preset.
-- Explicit `lid_weight` / `lid_rotation` on a keyframe override the expression's values
-  for that keyframe.
+- Explicit `lid_weight` / `lid_rotation` on a keyframe are **blended** with the expression
+  using `influence`, not overridden; see Feature 4.
 - **Fixes the carry-forward gap:** today `current_lid_weight` returns `None` whenever the
   previous keyframe didn't author `lid_weight` (`eye/sequence.py:201`), so lids freeze.
   Make `lid_weight` sticky too (carry the last authored value forward), so interpolation
@@ -254,6 +258,117 @@ if blending the two is wanted later.
 ### Gamepad (MANUAL mode)
 Add a binding to cycle expressions and one to return to `NEUTRAL`. Button assignment is
 still to be decided; check `bluetooth/bindings.py` for free combos.
+
+---
+
+## Feature 4: Layering Expressions with Keyframes (decided 2026-10-30)
+
+**Decision: Option 3, an influence blend.** Expressions describe *what* a face looks like (poses,
+no timing). Keyframes describe *when/where* (movement, timing, lid motion). Each keyframe's
+`influence` (0–1) decides how much the expression controls the final lid pose.
+
+Alternatives considered and rejected:
+- *Reference only* (keyframe names an expression, explicit values override): can't animate
+  lids within an expression.
+- *Additive offsets* (expression base + keyframe deltas): every keyframe value becomes
+  relative, so existing sample files would need converting. Could come back later inside
+  animated expressions (see Future).
+
+### Expression files: `resources/expressions/*.json` (`EXPRESSION_PATH`)
+Each file holds any number of expressions:
+```json
+{
+  "expressions": {
+    "ANGRY":    { "upper": [0.5, 12], "lower": [0.55, 5] },
+    "MENACING": { "extends": "ANGRY", "upper": [0.55, 18], "pupil_scale": 0.1 },
+    "SMUG":     { "left":  { "upper": [0.55, 4], "lower": [0.6, 0] },
+                  "right": { "upper": [0.35, 0], "lower": [0.7, 0] } }
+  }
+}
+```
+- `[weight, rotation]` pairs; rotation uses the semantic sign (`+` = inner corner down).
+- Top-level `upper`/`lower` = symmetric (right mirrors left). `left`/`right` = asymmetric.
+- Optional: `pupil_scale`, `blink_rate`, `gaze_bias`. Leaving one out = don't touch it.
+- `extends`: start from another expression and override only the listed fields. Resolve
+  after **all** files are loaded, so a parent can live in another file. Detect
+  cycles (`A → B → A`) and raise.
+
+### Loader (`eye/expressions.py`)
+```python
+def load_expressions(pattern: str = EXPRESSION_PATH) -> dict[str, Expression]:
+    """Merge every file matching pattern into one registry, then resolve `extends`."""
+```
+- Duplicate name across files → warn and let the later file win (sorted filename order, so
+  the result is deterministic).
+- Empty folder → empty registry, not an error. Expressions are optional.
+- **Validate when loading, not mid-run:** `SequencePlayer` checks every `"expression"` name
+  in its keyframes against the registry at load time, so a typo fails at startup rather
+  than halfway through a sequence on the Pi.
+
+### New keyframe fields
+| Field | Type | Sticky | Default | Meaning |
+|---|---|---|---|---|
+| `expression` | str \| null | yes | `null` | Target expression name; `null` clears it |
+| `influence` | float 0–1 | yes | `0.0` | Blend: 0 = keyframe lids, 1 = expression |
+| `lid_rotation` | `[u, l]` \| per-eye dict | yes | `[0, 0]` | Same shape as `lid_weight` |
+| `lid_weight` | (existing) | **now yes** | `[0.3, 0.7]` | Made sticky to fix the "freeze" gap |
+
+`influence` defaults to 0, so every existing keyframe file behaves exactly as today.
+
+### Per-frame lid pipeline
+```
+1. MANUAL gamepad override (Y/A held)?  → use it, skip everything below
+2. keyframe_pose  = eyelid_tracking ? tracking-derived weights
+                                    : interp(prev.lid_weight, kf.lid_weight, _t)
+                    rotation        = interp(prev.lid_rotation, kf.lid_rotation, _t)
+3. expr_pose      = LidAnimator.current   (eases toward the target expression)
+4. influence      = interp(prev.influence, kf.influence, _t)
+5. final          = lerp(keyframe_pose, expr_pose, influence)   # weights AND angles
+6. draw:  weight  → _blend_lid(final.wt, blink_weight)         # blink always last
+          rotation→ base_z ± final.rot * (1 − blink_weight)     # flatten while closing
+```
+- With no active expression, `influence` is ignored (equivalent to 0).
+- Interpolating `influence` with the same `_t` as movement means the blend eases with
+  the eye's travel. No separate timer is needed.
+- `pupil_scale` blends the same way: `lerp(keyframe_pupil, expr_pupil, influence)` when
+  both exist. Otherwise use whichever is present.
+
+### Example
+```json
+{ "data": [
+    { "destination": [20, 0],  "move_duration": 1.0, "lid_weight": [0.2, 0.8], "influence": 0.0 },
+    { "destination": [-20, 0], "move_duration": 0.6, "lid_weight": [0.6, 0.5], "influence": 0.5,
+      "expression": "MENACING" },
+    { "destination": [0, 0],   "move_duration": 1.5, "influence": 1.0 }
+]}
+```
+Keyframe lids in full control → half blended into `MENACING` → `MENACING` fully in control.
+Keyframe 3 needs no `lid_weight` because it's sticky (and ignored at influence 1 anyway).
+
+### Other control modes
+- **RANDOM / MANUAL:** there are no keyframes, so `keyframe_pose` = tracking or defaults. Setting an
+  expression (gamepad binding, or a future random-drift feature) eases `influence` to 1
+  over a fixed transition time (e.g. `EXPRESSION_TRANSITION: Final = 0.5` seconds).
+- `gaze_bias` only applies in RANDOM mode; scripted destinations are explicit.
+
+### Edge cases
+- **Sequence loop wrap:** sticky values carry from the last keyframe into the first.
+  The first keyframe should set `expression` / `influence` explicitly, or the
+  loader warns if it doesn't.
+- **Expression change at influence 1:** `LidAnimator` eases from the old pose to the new
+  one over the keyframe's `move_duration`, so there's no snap.
+- **Asymmetric expression with influence > 0:** forces `right_independent` lid updates
+  even when `MIRROR_LIDS` is True.
+- **`blink_rate`:** applies once `influence ≥ 0.5` (threshold to be tuned; scaling it smoothly
+  would make the blink timer jittery).
+
+### Future: animated expressions
+An expression may contain its own short looping keyframe list of *offsets* (micro-motion):
+a `SCARED` twitch, a `SLEEPY` slow droop. Applied after step 5 as small additive deltas.
+This is where the rejected additive model comes back, contained inside the expression.
+
+### editor.html
+Per keyframe: an expression dropdown (filled from the registry) and an influence slider.
 
 ---
 

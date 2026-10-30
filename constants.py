@@ -98,3 +98,4 @@ DE_BLINKING:     Final = 2
 SVG_PATH:        Final = "resources/graphics/dragon-eye-edit.svg"
 EYE_LID:         Final = "resources/graphics/lid.png"
 KEYFRAME_PATH:   Final = "resources/keyframes/*.json"
+EXPRESSION_PATH: Final = "resources/expressions/*.json"

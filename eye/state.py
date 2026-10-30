@@ -32,6 +32,10 @@ class EyeState:
         self.upper_tracking_pos = 0.3
         self.lower_tracking_pos = 0.7
 
+        # Lid Z tilt in degrees, semantic sign (+ = inner corner down); converted per side in draw_scene
+        self.upper_rot = 0.0
+        self.lower_rot = 0.0
+
     def start_blink(self, now, duration):
         self.blink_state = EN_BLINKING
         self.blink_start_time = now
@@ -139,6 +143,16 @@ class EyeState:
         l = max(0.0, min(lower_bias + self.current.y / 60.0, 1.0))
         self.upper_tracking_pos = (self.upper_tracking_pos * 3.0 + u) * 0.25
         self.lower_tracking_pos = (self.lower_tracking_pos * 3.0 + l) * 0.25
+
+    def ease_lid_weights(self, upper, lower):
+        """Ease lid tracking weights toward a fixed target (same 75/25 filter as update_tracking)."""
+        self.upper_tracking_pos = (self.upper_tracking_pos * 3.0 + upper) * 0.25
+        self.lower_tracking_pos = (self.lower_tracking_pos * 3.0 + lower) * 0.25
+
+    def ease_lid_rotation(self, upper, lower):
+        """Ease lid Z tilts toward a target in degrees (same 75/25 filter as update_tracking)."""
+        self.upper_rot = (self.upper_rot * 3.0 + upper) * 0.25
+        self.lower_rot = (self.lower_rot * 3.0 + lower) * 0.25
 
     def to_dict(self):
         s, d, c = self.start, self.destination, self.current

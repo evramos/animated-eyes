@@ -17,8 +17,9 @@ Stage order (called by main.py each frame):
 from constants import DEBUG_MOVEMENT, SEQUENCE_FILE
 from diagnostics.debug_overlay import DebugOverlay
 from eye import SequencePlayer, Eyes
+from eye.expressions import load_expressions
 from init import init_gpio, init_adc, init_svg, init_display, init_scene, init_ahrs_sensor
-from models import SvgPoints, DisplayContext
+from models import SvgPoints, DisplayContext, Expression
 from pipeline.stages import (_StageCtx, update_eye_positions, update_eye_set, update_blinks,
                              update_lid_tracking, update_lids, draw_scene)
 from pipeline.state import FrameState, LidChannels
@@ -32,7 +33,7 @@ class FramePipeline:
     thing that changes frame to frame; everything else lives here.
 
     Exposed attributes (needed by main.py / start_gamepad):
-        eyes, seq, sensor, eye_sets
+        eyes, seq, sensor, eye_sets, expressions
     """
 
     def __init__(self, radius: int | None = None):
@@ -43,6 +44,7 @@ class FramePipeline:
         self.eyes:     Eyes                = Eyes(self._svg)
         self.seq:      SequencePlayer      = SequencePlayer(SEQUENCE_FILE)
         self.sensor:   SensorReader | None = init_ahrs_sensor()
+        self.expressions: dict[str, Expression] = load_expressions()
 
         try:
             from mock.bonnet import Channel as _Channel, Bonnet as _MockBonnet
@@ -65,6 +67,7 @@ class FramePipeline:
             lid_channels   = _lid_channels,
             debug_overlay  = DebugOverlay(self._ctx) if DEBUG_MOVEMENT else None,
             display_ctx    = self._ctx,
+            expressions    = self.expressions,
         )
         self.eye_sets: dict = self._c.scene.eye_sets   # EyeSet → EyeSetDef
 
@@ -96,5 +99,5 @@ class FramePipeline:
     def update_lids(self, now: float) -> None:
         update_lids(self._c, now)
 
-    def draw_scene(self, state: FrameState) -> None:
-        draw_scene(self._c, state)
+    def draw_scene(self, now: float, state: FrameState) -> None:
+        draw_scene(self._c, now, state)

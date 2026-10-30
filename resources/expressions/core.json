@@ -1,0 +1,32 @@
+{
+  "expressions": {
+    "NEUTRAL":     { "upper": [0.3, 0],    "lower": [0.7, 0] },
+    "WIDE_AWAKE":  { "upper": [0.0, 0],    "lower": [1.0, 0] },
+    "TIRED":       { "upper": [0.6, 0],    "lower": [0.6, 0] },
+    "ANGRY":       { "upper": [0.5, 12],   "lower": [0.55, 5] },
+    "SAD":         { "upper": [0.5, -10],  "lower": [0.7, 0] },
+    "SUSPICIOUS":  { "upper": [0.6, 8],    "lower": [0.55, 4] },
+    "EXCITED":     { "upper": [0.1, 0],    "lower": [0.85, 0] },
+    "SQUINT":      { "upper": [0.65, 15],  "lower": [0.45, 8] },
+
+    "HAPPY":       { "upper": [0.35, -4],  "lower": [0.45, -8], "pupil_scale": 0.6 },
+    "SURPRISED":   { "extends": "WIDE_AWAKE", "pupil_scale": 0.3, "blink_rate": 0 },
+    "SCARED":      { "upper": [0.05, -8],  "lower": [0.9, 0],   "pupil_scale": 0.2, "blink_rate": 0.5 },
+    "WORRIED":     { "extends": "SAD", "upper": [0.35, -14], "pupil_scale": 0.5 },
+    "PLEADING":    { "upper": [0.15, -12], "lower": [0.8, 0],   "pupil_scale": 0.95, "gaze_bias": [0, 10] },
+    "SLEEPY":      { "upper": [0.75, -3],  "lower": [0.65, 0],  "blink_rate": 2.0 },
+    "BORED":       { "upper": [0.55, 0],   "lower": [0.7, 0],   "gaze_bias": [8, -10] },
+    "FOCUSED":     { "upper": [0.45, 6],   "lower": [0.55, 3],  "pupil_scale": 0.4 },
+    "DISGUSTED":   { "upper": [0.55, 6],   "lower": [0.45, -6] },
+    "MISCHIEVOUS": { "upper": [0.5, 6],    "lower": [0.5, -6],  "gaze_bias": [12, 0] },
+    "MENACING":    { "extends": "ANGRY", "upper": [0.55, 18], "lower": [0.5, 6], "pupil_scale": 0.1 },
+
+    "CONFUSED":    { "left":  { "upper": [0.25, -8], "lower": [0.7, 0] },
+                     "right": { "upper": [0.55, 6],  "lower": [0.6, 0] } },
+    "SKEPTICAL":   { "left":  { "upper": [0.15, -6], "lower": [0.7, 0] },
+                     "right": { "upper": [0.55, 8],  "lower": [0.55, 3] } },
+    "SMUG":        { "left":  { "upper": [0.55, 4],  "lower": [0.6, 0] },
+                     "right": { "upper": [0.35, 0],  "lower": [0.7, 0] },
+                     "gaze_bias": [15, 0] }
+  }
+}

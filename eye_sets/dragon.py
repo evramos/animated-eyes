@@ -11,13 +11,19 @@ runs scale_points before any renderer is built.
 
 from __future__ import annotations
 
+from typing import Final
+
 import pi3d
 
-from constants import EyeSet, IRIS_PATH, SCLERA_PATH, UV_MAP
+from constants import EyeSet
 from eye_sets.base import EyeSetInitializer
 from gfxutil import mesh_init, points_bounds, points_interp, points_mesh, re_axis, zangle
 from models import EyeSetDef, Side, SvgPoints
 
+# ── Assets ─────────────────────────────────────────────────────────────────────
+
+IRIS_PATH:       Final = "resources/graphics/dragon-iris-color.png"
+SCLERA_PATH:     Final = "resources/graphics/dragon-sclera.png"
 
 # ── Registration ───────────────────────────────────────────────────────────────
 
@@ -45,7 +51,7 @@ class DragonRenderer:
         sclera_map = pi3d.Texture(SCLERA_PATH, mipmap=False, filter=pi3d.constants.GL_LINEAR, blend=True)
 
         # U/V map may be useful for debugging texture placement; not normally used
-        uv_map     = pi3d.Texture(UV_MAP,      mipmap=False, filter=pi3d.constants.GL_LINEAR, blend=False, m_repeat=True)
+        # uv_map = pi3d.Texture("resources/graphics/uv.png",  mipmap=False, filter=pi3d.constants.GL_LINEAR, blend=False, m_repeat=True)
 
         # Regenerating the iris during pupil dilation is CPU intensive. Determine a size change threshold below which
         # regeneration will not occur; roughly equal to 1/4 pixel, since 4x4 area sampling is used.

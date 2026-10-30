@@ -96,8 +96,5 @@ DE_BLINKING:     Final = 2
 
 # ── Resource Assets ───────────────────────────────────────────────────────────────────────────────────────────────────
 SVG_PATH:        Final = "resources/graphics/dragon-eye-edit.svg"
-IRIS_PATH:       Final = "resources/graphics/dragon-iris-color.png"
-SCLERA_PATH:     Final = "resources/graphics/dragon-sclera.png"
 EYE_LID:         Final = "resources/graphics/lid.png"
-UV_MAP:          Final = "resources/graphics/uv.png"
 KEYFRAME_PATH:   Final = "resources/keyframes/*.json"

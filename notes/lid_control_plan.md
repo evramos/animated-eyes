@@ -102,22 +102,63 @@ Z-rotation effectively "tilts" the eyebrow shape without changing the weight/ope
 | Upper out + lower in | Opposite tilt | Confused / wry |
 | Asymmetric left vs. right eye | One eye only | Smug / suspicious |
 
+### Rotation sign convention (revised 2026-10-30)
+Author angles **semantically**, not per-screen:
+- **`+` = inner (nose-side) corner DOWN**: angry / menacing direction
+- **`−` = inner corner UP**: sad / worried / pleading direction
+
+Convert to pi3d Z at draw time: `left z = base + angle`, `right z = base − angle`,
+where `base = ROTATE_DEGREES if ROTATE_EYES else 0`. Presets then never need
+per-eye signs, and the mount correction is never lost (see "Composition with
+ROTATE_EYES" below).
+
 ### Expression presets (rotation + weight combos)
-These are approximate starting points; all need visual tuning.
+These are approximate starting points; all need visual tuning. Rotation columns use
+the semantic sign above and give **left-eye** values; the right eye mirrors unless the preset is
+listed under the asymmetric table.
 
-| Expression | Upper wt | Lower wt | Upper rot (left/right) | Lower rot (left/right) |
-|---|---|---|---|---|
-| `NEUTRAL` | 0.3 | 0.7 | 0° / 0° | 0° / 0° |
-| `WIDE_AWAKE` | 0.0 | 1.0 | 0° / 0° | 0° / 0° |
-| `TIRED` | 0.6 | 0.6 | 0° / 0° | 0° / 0° |
-| `ANGRY` | 0.5 | 0.55 | +12° / −12° | +5° / −5° |
-| `SAD` | 0.5 | 0.7 | −10° / +10° | 0° / 0° |
-| `SUSPICIOUS` | 0.6 | 0.55 | +8° / −8° | +4° / −4° |
-| `EXCITED` | 0.1 | 0.85 | 0° / 0° | 0° / 0° |
-| `SQUINT` | 0.65 | 0.45 | +15° / −15° | +8° / −8° |
+**Core set (original)**
 
-Positive rotation = clockwise when viewed from the front.
-For mirrored eyes (left/right) the sign flips to keep the expression symmetric.
+| Expression | Upper wt | Lower wt | Upper rot | Lower rot | Notes |
+|---|---|---|---|---|---|
+| `NEUTRAL` | 0.3 | 0.7 | 0° | 0° | Default resting pose |
+| `WIDE_AWAKE` | 0.0 | 1.0 | 0° | 0° | |
+| `TIRED` | 0.6 | 0.6 | 0° | 0° | |
+| `ANGRY` | 0.5 | 0.55 | +12° | +5° | |
+| `SAD` | 0.5 | 0.7 | −10° | 0° | |
+| `SUSPICIOUS` | 0.6 | 0.55 | +8° | +4° | |
+| `EXCITED` | 0.1 | 0.85 | 0° | 0° | |
+| `SQUINT` | 0.65 | 0.45 | +15° | +8° | |
+
+**Extended set (new)**
+
+| Expression | Upper wt | Lower wt | Upper rot | Lower rot | Pupil | Extras |
+|---|---|---|---|---|---|---|
+| `HAPPY` | 0.35 | 0.45 | −4° | −8° | 0.6 | Lower lid pushed up = "smiling eyes" |
+| `SURPRISED` | 0.0 | 1.0 | 0° | 0° | 0.3 | Suppress auto-blink while held |
+| `SCARED` | 0.05 | 0.9 | −8° | 0° | 0.2 | Small gaze jitter; faster blink rate |
+| `WORRIED` | 0.35 | 0.7 | −14° | 0° | 0.5 | Stronger inner-up than `SAD` |
+| `PLEADING` | 0.15 | 0.8 | −12° | 0° | 0.95 | Big pupils, gaze slightly up |
+| `SLEEPY` | 0.75 | 0.65 | −3° | 0° | — | Blink rate ×0.5, slow blink duration |
+| `BORED` | 0.55 | 0.7 | 0° | 0° | — | Gaze bias down/side |
+| `FOCUSED` | 0.45 | 0.55 | +6° | +3° | 0.4 | Steady gaze, reduced saccade range |
+| `DISGUSTED` | 0.55 | 0.45 | +6° | −6° | — | Lower inner corner up (sneer) |
+| `MISCHIEVOUS` | 0.5 | 0.5 | +6° | −6° | — | Gaze bias to one side |
+| `MENACING` | 0.55 | 0.5 | +18° | +6° | 0.1 | Signature dragon look, slit pupil; near the rotation limit |
+
+Pupil = `pupil_scale` (0 = min/slit, 1 = max dilation, same as keyframe JSON). "—" = leave
+the current pupil behaviour unchanged.
+
+**Asymmetric presets** (left and right given separately, no mirroring)
+
+| Expression | Left upper wt / rot | Left lower wt / rot | Right upper wt / rot | Right lower wt / rot | Extras |
+|---|---|---|---|---|---|
+| `CONFUSED` | 0.25 / −8° | 0.7 / 0° | 0.55 / +6° | 0.6 / 0° | |
+| `SKEPTICAL` | 0.15 / −6° | 0.7 / 0° | 0.55 / +8° | 0.55 / +3° | One "brow" raised |
+| `SMUG` | 0.55 / +4° | 0.6 / 0° | 0.35 / 0° | 0.7 / 0° | Gaze to the side |
+
+Asymmetric presets require the right eye's lids to update independently, so they must force the
+`right_independent` path in `update_lid_tracking` (currently `crazy_eyes or not MIRROR_LIDS`).
 
 ### API options for per-lid rotation
 
@@ -140,6 +181,80 @@ Add a `(upper_angle, lower_angle)` field to the expression system and drive it i
 Recommendation: start with **Option A** (minimal, backward-compatible) and move to C
 once the expression preset system is fleshed out.
 
+### Composition with ROTATE_EYES
+Today `draw_scene()` only calls `lids[side].rotateToZ(z)` when `ROTATE_EYES` is set, and
+`rotateToZ` is absolute. Expression rotation must therefore:
+1. Always be applied, even when `ROTATE_EYES` is False (base = 0).
+2. Add to the mount angle, never replace it: `rotateToZ(base ± upper, base ± lower)`.
+
+Pivot: pi3d rotates around the mesh origin, which for the lids is the eye center. A lid point
+at distance `d` from center moves about `d·sin θ`; at the default 128px radius, 12° moves the
+corner roughly 25px. This is the main reason for the rotation-limit question below.
+
+---
+
+## Feature 3: Expression Preset Data Model
+
+### Proposed types
+```python
+@dataclass(frozen=True)
+class LidPose:
+    upper_wt:  float          # 0 = open, 1 = closed (same as everywhere else)
+    lower_wt:  float
+    upper_rot: float = 0.0    # degrees, semantic sign (+ = inner corner down)
+    lower_rot: float = 0.0
+
+@dataclass(frozen=True)
+class Expression:
+    left:        LidPose
+    right:       LidPose | None = None          # None → mirror left
+    pupil_scale: float | None = None            # None → leave pupil alone
+    gaze_bias:   tuple[float, float] | None = None
+    blink_rate:  float | None = None            # multiplier on auto-blink interval; 0 = suppress
+```
+- Presets live in a dict keyed by an `Expression` enum name (e.g. in `eye/expressions.py`).
+- `right=None` covers the symmetric tables; asymmetric presets fill in `right`.
+- Optional fields stay `None`, so an expression only overrides what it authors and
+  everything else (saccades, pupil, auto-blink) keeps running normally.
+
+### LidAnimator (answers open question 4)
+One object per eye that owns the **current** and **target** `LidPose` plus a duration, and is
+eased with `smoothstep`. Weights and angles move together, so they never step on each other.
+`update_lid_tracking` reads `animator.current` as a new priority level:
+
+1. MANUAL gamepad override (Y/A held)
+2. **Active expression (`LidAnimator`)** ← new
+3. `eyelid_tracking=True`
+4. Scripted `lid_weight`
+5. lid_channels preview / fixed defaults
+
+Expression sits above tracking because a held emotion should not be pulled around by the
+eye's vertical position. An expression could set `eyelid_tracking=True` explicitly
+if blending the two is wanted later.
+
+### Keyframe JSON integration
+```json
+{ "destination": [0, 0], "move_duration": 0.8, "hold_duration": 2.0,
+  "expression": "MENACING" }
+```
+- `expression` is **sticky**, like `auto_blink` / `eyelid_tracking`: it persists until a
+  later keyframe changes it. `"expression": null` returns to normal lid behaviour.
+- The transition uses the keyframe's `move_duration` (via `LidAnimator`), so lids ease
+  into the emotion while the eye travels.
+- Optional `lid_rotation: [upper, lower]` (or a `{"left": …, "right": …}` dict, mirroring
+  `lid_weight`) for one-off angles without a named preset.
+- Explicit `lid_weight` / `lid_rotation` on a keyframe override the expression's values
+  for that keyframe.
+- **Fixes the carry-forward gap:** today `current_lid_weight` returns `None` whenever the
+  previous keyframe didn't author `lid_weight` (`eye/sequence.py:201`), so lids freeze.
+  Make `lid_weight` sticky too (carry the last authored value forward), so interpolation
+  always has a "from" value.
+- `editor.html` gains an expression dropdown per keyframe.
+
+### Gamepad (MANUAL mode)
+Add a binding to cycle expressions and one to return to `NEUTRAL`. Button assignment is
+still to be decided; check `bluetooth/bindings.py` for free combos.
+
 ---
 
 ## Open Questions / Refinement Needed
@@ -148,15 +263,19 @@ once the expression preset system is fleshed out.
    visual testing; actual values depend on the SVG geometry of the active eye set.
 2. **Rotation limits** — what angle range looks good before the lid curve clips or
    looks broken? Likely ±15°–20° maximum; needs testing.
-3. **Per-eye asymmetry** — should expressions always be symmetric (left mirrors right)
-   or do we want first-class asymmetric presets (e.g. smug left eye only)?
-4. **Smooth transition between expressions** — `animate_lid_weights` + `animate_lid_rotation`
-   both need to run concurrently without stepping on each other or the blink system.
-   A small `LidAnimator` class that owns both weight and angle targets + speeds may be
-   cleaner than two separate animation variables on `EyeState`.
-5. **Interaction with blink** — `_blend_lid` always applies blink on top of tracking_pos.
-   Rotation does not currently interact with blink; confirm this is the right behaviour
-   (do we want the rotation to zero out when the eye is fully blinked closed?).
+3. **Per-eye asymmetry**: *proposed answer:* yes, first-class asymmetric presets via
+   `Expression.right` (see `CONFUSED` / `SKEPTICAL` / `SMUG`). They force independent right-lid updates.
+4. **Smooth transition between expressions**: *proposed answer:* one `LidAnimator` per
+   eye owning weight + angle targets together (see Feature 3).
+5. **Interaction with blink**: `_blend_lid` always applies blink on top of tracking_pos.
+   *Proposed:* scale rotation by `(1 − blink_weight)` so the lids flatten as they close and
+   meet cleanly. Tilted lids at full closure may leave a gap at the corners; verify visually.
 6. **Eye set compatibility** — lid rotation + weight values tuned for the dragon SVG
    will need re-tuning for other eye sets (hypno spiral uses different lid geometry).
    Consider storing per-eye-set defaults in the `EyeSetDef`.
+7. **Expression vs. RANDOM mode**: should RANDOM mode occasionally drift into a
+   random expression (weighted toward `NEUTRAL`)? That would give the idle animation
+   more life without any scripting.
+8. **Gaze bias scope**: `gaze_bias` needs a hook into `EyeState.update_position`'s random
+   destination picker (offset the unit-circle center). Confirm that's acceptable before
+   adding it.
